@@ -1,0 +1,5 @@
+[
+  {"name":"users","description":"电商用户主数据，含用户注册日期、城市和地区。","primaryKey":"user_id","columns":[["user_id","用户唯一标识"],["name","用户姓名"],["region","销售大区，如华东"],["city","所在城市"],["registered_at","注册日期"]]},
+  {"name":"products","description":"商品主数据，含商品品类和标价。","primaryKey":"product_id","columns":[["product_id","商品唯一标识"],["name","商品名称"],["category","商品品类"],["unit_price","商品标价"]]},
+  {"name":"orders","description":"订单明细事实表，每行对应一笔商品订单。","primaryKey":"order_id","columns":[["order_id","订单唯一标识"],["order_date","下单日期"],["user_id","关联 users 的用户标识"],["product_id","关联 products 的商品标识"],["quantity","购买数量"],["amount","订单实付金额"],["status","订单状态"]],"relations":["orders.user_id -> users.user_id","orders.product_id -> products.product_id"]}
+]

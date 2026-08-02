@@ -8,10 +8,10 @@
 
 包含：
 
-- React 单页聊天工作台和 FastAPI API。
+- React 单页聊天工作台和本地 Node HTTP API。
 - 本地元数据目录与 RAG 检索。
 - Agent 意图路由、工具选择、SQL 生成、只读安全审核和一次失败修复。
-- DuckDB 查询工具（模拟 Athena）和异步任务工具（模拟 Glue Job）。
+- SQLite 查询工具（模拟 Athena）和异步任务工具（模拟 Glue Job）。
 - 可选 Ollama 集成；默认确定性规划器保证离线运行。
 - 自动化测试和六个预置演示场景。
 
@@ -20,11 +20,11 @@
 ## 架构
 
 ```text
-React Chat UI
-     | HTTP / SSE
-FastAPI Agent Orchestrator
+React / Vite Chat UI
+     | HTTP
+Node HTTP Agent Orchestrator
      |-- Catalog RAG Tool       -> metadata/catalog.json
-     |-- Query Tool             -> DuckDB + local ecommerce data
+     |-- Query Tool             -> SQLite + local ecommerce data
      |-- ETL Tool               -> simulated job runner + run history
      `-- Guardrails             -> read-only SQL and parameter validation
 ```
@@ -39,7 +39,7 @@ Agent 只能经由工具层访问目录、查询数据或启动任务。云服�
 | `rag` | 按表名、字段、描述、业务词检索目录上下文 | 本地 catalog |
 | `tools` | 提供目录检索、查询、任务启动与状态查询 | adapters |
 | `guardrails` | 审核 SQL、校验 Job 与参数、拒绝危险请求 | SQL parser/规则 |
-| `adapters` | 封装本地 DuckDB、目录文件和模拟 Job | 文件系统、DuckDB |
+| `adapters` | 封装本地 SQLite、目录文件和模拟 Job | 文件系统、Node 内置 SQLite |
 | `api` | 暴露 REST/SSE API 与请求模型 | agent |
 | `web` | 对话、执行时间线、结果表格和 Job 状态 | API |
 
@@ -81,7 +81,7 @@ Agent 只能经由工具层访问目录、查询数据或启动任务。云服�
 - `POST /api/chat`：输入 `message` 和可选会话 ID；返回回答、意图、检索上下文、步骤事件和结果。
 - `GET /api/catalog/search?q=`：返回匹配的目录条目，用于调试和演示。
 - `GET /api/jobs/{run_id}`：返回模拟任务状态和日志。
-- Swagger 由 FastAPI 自动提供。
+- `GET /api/openapi.json` 提供轻量 OpenAPI 描述，供 API 演示。
 
 前端是单页工作台，含输入框、聊天消息和可展开的执行时间线。查询消息显示命中目录、SQL、结果表、行数和耗时；ETL 消息显示进度与日志；安全拒绝显示具体原因。
 
