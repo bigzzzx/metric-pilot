@@ -59,8 +59,10 @@ def agents():
 @app.post("/api/chat")
 async def chat(x:ChatIn):
     con=db(); history=[dict(r) for r in con.execute("SELECT role,content FROM sessions WHERE session_id=? ORDER BY created_at",(x.session_id,))]; con.close()
-    state=await run_agent(x.message,x.agent_id,history,x.model_id); plan=state["plan"]; answer=str(plan.get("answer") or "I have processed your request.")
-    con=db(); con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"user",x.message)); con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"assistant",answer)); con.commit(); con.close()
+    state=await run_agent(x.message,x.agent_id,history,x.model_id); plan=state.get("plan",{}); final=state.get("final",plan); answer=str(final.get("answer") or "I have processed your request.")
+    con=db(); con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"user",x.message));
+    if state.get("result") is not None: con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"user","Tool result: "+json.dumps(state["result"],ensure_ascii=False)))
+    con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"assistant",answer)); con.commit(); con.close()
     sql,result=state.get("sql",""),state.get("result",[]); steps=[{"name":"RAG metadata retrieval","detail":f"Retrieved {len(state.get('rag',[]))} metadata / metric / SQL-example chunks"},{"name":"LLM planning","detail":"Model chose chat or tool usage"}]
     if sql: steps += [{"name":"SQL guardrail","detail":"Read-only and catalog allowlist passed"},{"name":"Local Athena simulation","detail":f"Returned {len(result)} rows"}]
-    return {"answer":answer,"intent":"DATA_QUERY" if sql else "CHAT","sql":sql,"result":result,"analysis":answer if plan.get("should_analyze") else "","catalog":[{"name":item["title"]} for item in state.get("rag",[])],"modelMode":"configured","steps":steps}
+    return {"answer":answer,"intent":"DATA_QUERY" if sql else "CHAT","sql":sql,"result":result,"analysis":answer if state.get("final") else "","catalog":[{"name":item["title"]} for item in state.get("rag",[])],"modelMode":"configured","steps":steps}
