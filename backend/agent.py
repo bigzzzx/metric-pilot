@@ -19,7 +19,9 @@ RAG context:\n""" + context
 
 def execute_query(state: dict) -> dict:
     sql = str(state["plan"].get("sql") or "").strip()
-    return {"sql": sql, "result": run_readonly_sql(sql)} if sql else {"sql":"", "result":[]}
+    # Plain-dict LangGraph state is replaced by a node result; keep plan/RAG
+    # fields for the route after the tool node has completed.
+    return {**state, "sql": sql, "result": run_readonly_sql(sql)} if sql else {**state, "sql":"", "result":[]}
 
 
 def next_step(state: dict) -> str:
