@@ -1,5 +1,5 @@
 {
-  "name": "local-aws-data-agent",
+  "name": "data-agent",
   "private": true,
   "type": "module",
   "scripts": {
