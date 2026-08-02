@@ -1,0 +1,30 @@
+.answer-tags .model-tag {
+  background: #f2efff;
+  color: #6556a7;
+}
+
+.analysis-card {
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid #e3ddfa;
+  border-radius: 8px;
+  background: #fbfaff;
+}
+
+.analysis-card > div {
+  color: #605496;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.analysis-card > div span {
+  color: #806de0;
+}
+
+.analysis-card p {
+  margin: 7px 0 0;
+  color: #4d4c5e;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.65;
+}

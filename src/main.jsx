@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import catalog from '../metadata/catalog.json';
 import './styles.css';
+import './llm.css';
 
 const samples = ['查询上月华东地区各品类销售额', 'orders 表中 amount 字段含义是什么？', '刷新昨日订单宽表', '删除旧订单表'];
 const navItems = [
@@ -39,10 +40,10 @@ function JobStatus({ runId, onUpdate }) {
 }
 
 function Answer({ data, onJobUpdate }) {
-  return <article className="answer"><div className="answer-label"><span>✦</span> Data Agent <em>{data.intent}</em></div><p>{data.answer}</p><div className="answer-tags">{data.catalog?.length > 0 && <span>Catalog RAG · {data.catalog.map((item) => item.name).join(', ')}</span>}{data.sql && <span className="approved">SQL 已审核</span>}</div>{data.sql && <details><summary>查看最终 SQL</summary><pre>{data.sql}</pre></details>}<QueryResult data={data}/>{data.run_id && <JobStatus runId={data.run_id} onUpdate={onJobUpdate}/>}<details className="mobile-trace"><summary>执行详情</summary><Trace data={data} compact /></details></article>;
+  return <article className="answer"><div className="answer-label"><span>✦</span> Data Agent <em>{data.intent}</em></div><p>{data.answer}</p><div className="answer-tags">{data.modelMode === 'deepseek' && <span className="model-tag">DeepSeek</span>}{data.catalog?.length > 0 && <span>Catalog RAG · {data.catalog.map((item) => item.name).join(', ')}</span>}{data.sql && <span className="approved">SQL 已审核</span>}</div>{data.sql && <details><summary>查看最终 SQL</summary><pre>{data.sql}</pre></details>}<QueryResult data={data}/>{data.analysis && <section className="analysis-card"><div><span>✦</span> 数据分析</div><p>{data.analysis}</p></section>}{data.run_id && <JobStatus runId={data.run_id} onUpdate={onJobUpdate}/>}<details className="mobile-trace"><summary>执行详情</summary><Trace data={data} compact /></details></article>;
 }
 
-function ChatWorkspace({ messages, setMessages, setLatest }) {
+function ChatWorkspace({ messages, setMessages, setLatest, sessionId }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const send = async (message) => {
@@ -50,7 +51,7 @@ function ChatWorkspace({ messages, setMessages, setLatest }) {
     if (!text || busy) return;
     setBusy(true); setMessages((items) => [...items, { role: 'user', text }]);
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, sessionId }) });
       const data = await response.json();
       setMessages((items) => [...items, { role: 'agent', data }]); setLatest(data); setInput('');
     } catch {
@@ -84,12 +85,13 @@ function App() {
   const [view, setView] = useState('chat');
   const [messages, setMessages] = useState([]);
   const [latest, setLatest] = useState(null);
+  const [sessionId] = useState(() => crypto.randomUUID());
   const content = useMemo(() => {
     if (view === 'catalog') return <CatalogWorkspace />;
     if (view === 'jobs') return <JobsWorkspace latest={latest} />;
     if (view === 'history') return <HistoryWorkspace messages={messages} setView={setView} />;
-    return <ChatWorkspace messages={messages} setMessages={setMessages} setLatest={setLatest} />;
-  }, [view, messages, latest]);
+    return <ChatWorkspace messages={messages} setMessages={setMessages} setLatest={setLatest} sessionId={sessionId} />;
+  }, [view, messages, latest, sessionId]);
   return <div className="app-shell"><aside className="sidebar"><div className="brand"><span>✦</span> Data Agent</div><nav>{navItems.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="sidebar-status"><span></span><div>LOCAL MODE<small>服务运行正常</small></div></div></aside><main>{content}</main><ExecutionPanel latest={latest} /></div>;
 }
 
