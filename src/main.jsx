@@ -1,13 +1,80 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import catalog from '../metadata/catalog.json';
 import './styles.css';
-import './llm.css';
 
-function Trace({ steps=[] }) { return <div className="trace">{steps.map((s,i)=><div className="trace-step" key={s.name}><span>{String(i+1).padStart(2,'0')}</span><div><b>{s.name}</b><small>{s.detail}</small></div></div>)}</div>; }
-function Answer({ data }) { const rows=data.result||[]; const cols=rows[0]&&Object.keys(rows[0]); return <article className="answer"><div className="answer-label">✦ Data Agent <em>{data.intent}</em></div><p>{data.answer}</p><div className="answer-tags"><span className="model-tag">Configured LLM</span>{data.catalog?.length>0&&<span>RAG · {data.catalog.map(x=>x.name).join(' / ')}</span>}</div>{data.sql&&<details><summary>查看最终 SQL</summary><pre>{data.sql}</pre></details>}{cols&&<div className="table-wrap"><table><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{cols.map(c=><td key={c}>{r[c]}</td>)}</tr>)}</tbody></table></div>}</article>; }
-function Chat({ latest, setLatest }) { const [messages,setMessages]=useState([]),[input,setInput]=useState(''),[busy,setBusy]=useState(false),[models,setModels]=useState([]),[modelId,setModelId]=useState(''); const [sessionId]=useState(()=>crypto.randomUUID()); useEffect(()=>{fetch('/api/models').then(r=>r.json()).then(m=>{setModels(m);setModelId(m[0]?.id||'')})},[]); async function send(q){const message=(q||input).trim();if(!message||busy)return;setBusy(true);setMessages(v=>[...v,{role:'user',text:message}]);try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,session_id:sessionId,model_id:modelId||null})});const data=await r.json();if(!r.ok)throw Error(data.detail||'请求失败');setMessages(v=>[...v,{role:'agent',data}]);setLatest(data);setInput('')}catch(e){setMessages(v=>[...v,{role:'agent',data:{intent:'ERROR',answer:e.message,steps:[]}}])}finally{setBusy(false)}} return <section className="workspace"><div className="workspace-title"><div><h1>分析助手</h1><p>Ecommerce Lake · 当前会话</p></div><select className="chat-model-select" value={modelId} onChange={e=>setModelId(e.target.value)} title="本轮对话使用的模型"><option value="">默认 Agent 模型</option>{models.map(m=><option key={m.id} value={m.id}>{m.display_name}</option>)}</select></div><div className="conversation">{!messages.length&&<div className="welcome"><h2>今天想了解哪些数据？</h2><p>左上角可为当前会话选择模型；Agent 会自行决定闲聊或调用数据工具。</p><div className="sample-grid">{['查询 2026 年 7 月华东各品类销售额','orders 表的 amount 是什么？','为什么数码销售额最高？','你是什么模型？'].map(x=><button key={x} onClick={()=>send(x)}>{x}</button>)}</div></div>}{messages.map((m,i)=>m.role==='user'?<div className="user-message" key={i}>{m.text}</div>:<Answer key={i} data={m.data}/>)}{busy&&<div className="thinking">正在调用模型…</div>}</div><form className="composer" onSubmit={e=>{e.preventDefault();send()}}><input value={input} onChange={e=>setInput(e.target.value)} placeholder="发送一条数据请求…"/><button disabled={busy}>↑</button></form><p className="composer-note">仅允许目录白名单中的只读 SQL。</p></section>; }
-function Catalog(){const [chosen,setChosen]=useState(catalog[0]);return <section className="workspace"><div className="workspace-title"><div><h1>数据目录</h1><p>本地模拟 Glue Data Catalog</p></div></div><div className="catalog-layout"><div className="table-list">{catalog.map(x=><button className={chosen.name===x.name?'active':''} onClick={()=>setChosen(x)} key={x.name}><b>{x.name}</b><span>{x.description}</span></button>)}</div><div className="table-detail"><h2>{chosen.name}</h2><p>{chosen.description}</p><h3>字段</h3><div className="field-list">{chosen.columns.map(([n,d])=><div key={n}><code>{n}</code><span>{d}</span></div>)}</div></div></div></section>;}
-function Manage(){const [providers,setProviders]=useState([]),[models,setModels]=useState([]);useEffect(()=>{fetch('/api/providers').then(r=>r.json()).then(setProviders);fetch('/api/models').then(r=>r.json()).then(setModels)},[]);return <section className="workspace manage-workspace"><div className="workspace-title"><div><h1>智能体管理</h1><p>模型供应商与 Agent 绑定在 FastAPI 配置层管理</p></div></div><h2 className="section-heading">模型供应商</h2><div className="provider-grid">{providers.map(p=><article className="provider-card" key={p.id}><div><b>{p.name}</b><em>已启用</em></div><p>{p.kind}</p><code>{p.base_url}</code><small>Key {p.api_key_mask}</small></article>)}</div><h2 className="section-heading">可选择模型</h2><div className="model-list">{models.map(m=><div key={m.id}><b>{m.display_name}</b><span>{m.model_id}</span></div>)}</div><p className="manage-hint">新增供应商和模型可通过 FastAPI 的 /docs 操作；下一版会把新增表单也放到此页面。</p></section>;}
-function App(){const [view,setView]=useState('chat'),[latest,setLatest]=useState(null);const pages={chat:'对话工作台',catalog:'数据目录',manage:'智能体管理'};return <div className="app-shell"><aside className="sidebar"><div className="brand">✦ Data Agent</div><nav>{Object.entries(pages).map(([id,name])=><button key={id} className={view===id?'active':''} onClick={()=>setView(id)}><span>◦</span>{name}</button>)}</nav><div className="sidebar-status"><span/><div>LOCAL MODE<small>FastAPI · LangGraph</small></div></div></aside><main>{view==='chat'?<Chat latest={latest} setLatest={setLatest}/>:view==='catalog'?<Catalog/>:<Manage/>}</main><aside className="execution-panel"><div className="panel-title">本次执行</div>{latest?<Trace steps={latest.steps}/>:<div className="execution-empty"><p>提交问题后会显示 RAG、规划、审核与执行步骤。</p></div>}</aside></div>}
-createRoot(document.getElementById('root')).render(<App/>);
+const nav = [
+  ['new-chat', '✦', '创建新对话'],
+  ['catalog', '▤', '数据目录'],
+  ['extensions', '⌘', '智能体扩展'],
+  ['manage', '⚙', '智能体管理'],
+];
+
+function AssistantAnswer({ data }) {
+  const rows = data.result || [];
+  const columns = rows[0] ? Object.keys(rows[0]) : [];
+  return <article className="message assistant-message">
+    <div className="message-name">✦ Data Agent <span>{data.intent}</span></div>
+    <p>{data.answer}</p>
+    {data.sql && <details><summary>查看 SQL</summary><pre>{data.sql}</pre></details>}
+    {columns.length > 0 && <div className="table-wrap"><table><thead><tr>{columns.map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map(x => <td key={x}>{row[x]}</td>)}</tr>)}</tbody></table></div>}
+  </article>;
+}
+
+function Composer({ models, modelId, setModelId, agents, agentId, setAgentId, onSend, busy }) {
+  const [value, setValue] = useState('');
+  const submit = event => { event.preventDefault(); onSend(value); setValue(''); };
+  return <form className="home-composer" onSubmit={submit}>
+    <textarea value={value} onChange={event => setValue(event.target.value)} placeholder="发消息给 Data Agent…" rows="3" />
+    <div className="composer-toolbar">
+      <span className="composer-add">＋</span>
+      <select aria-label="选择智能体" value={agentId} onChange={e => setAgentId(e.target.value)}>
+        {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+      </select>
+      <span className="toolbar-spacer" />
+      <select aria-label="选择模型" value={modelId} onChange={e => setModelId(e.target.value)}>
+        <option value="">默认模型</option>
+        {models.map(model => <option key={model.id} value={model.id}>{model.display_name}</option>)}
+      </select>
+      <button type="submit" disabled={busy || !value.trim()} aria-label="发送">↑</button>
+    </div>
+  </form>;
+}
+
+function ChatHome({ session, setSession, addRecent }) {
+  const [messages, setMessages] = useState([]);
+  const [models, setModels] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [modelId, setModelId] = useState('');
+  const [agentId, setAgentId] = useState('data-agent');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { Promise.all([fetch('/api/models').then(r => r.json()), fetch('/api/agents').then(r => r.json())]).then(([modelData, agentData]) => { setModels(modelData); setAgents(agentData); setModelId(modelData[0]?.id || ''); setAgentId(agentData[0]?.id || 'data-agent'); }); }, []);
+  const send = async text => {
+    const message = text.trim(); if (!message || busy) return;
+    setBusy(true); setMessages(items => [...items, { role: 'user', text: message }]); addRecent(message);
+    try {
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, model_id: modelId || null, agent_id: agentId }) });
+      const raw = await response.text(); const data = JSON.parse(raw);
+      if (!response.ok) throw Error(data.detail || '请求失败');
+      setMessages(items => [...items, { role: 'assistant', data }]);
+    } catch (error) { setMessages(items => [...items, { role: 'assistant', data: { intent: 'ERROR', answer: error.message } }]); }
+    finally { setBusy(false); }
+  };
+  const newConversation = () => { setMessages([]); setSession(crypto.randomUUID()); };
+  return <section className="chat-page">
+    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div><button className="new-thread-small" onClick={newConversation}>新对话</button></>}
+  </section>;
+}
+
+function Catalog() { const [chosen, setChosen] = useState(catalog[0]); return <section className="page"><h1>数据目录</h1><p className="page-subtitle">查看已登记的数据资产、字段与关联关系。</p><div className="catalog-layout"><div className="table-list">{catalog.map(item => <button key={item.name} className={chosen.name === item.name ? 'active' : ''} onClick={() => setChosen(item)}><b>{item.name}</b><span>{item.description}</span></button>)}</div><div className="table-detail"><h2>{chosen.name}</h2><p>{chosen.description}</p><div className="field-list">{chosen.columns.map(([name, description]) => <div key={name}><code>{name}</code><span>{description}</span></div>)}</div></div></div></section>; }
+function Placeholder({ title, text }) { return <section className="page placeholder-page"><h1>{title}</h1><p>{text}</p></section>; }
+
+function App() {
+  const [view, setView] = useState('new-chat');
+  const [session, setSession] = useState(() => crypto.randomUUID());
+  const [recent, setRecent] = useState([]);
+  const addRecent = text => setRecent(items => [{ id: crypto.randomUUID(), text, time: new Date() }, ...items.filter(item => item.text !== text)].slice(0, 6));
+  const content = useMemo(() => view === 'new-chat' ? <ChatHome session={session} setSession={setSession} addRecent={addRecent} /> : view === 'catalog' ? <Catalog /> : view === 'extensions' ? <Placeholder title="智能体扩展" text="后续在此添加用户自己的 Skills、MCP 服务和工具连接。" /> : <Placeholder title="智能体管理" text="后续在此管理 Agent、模型供应商和模型配置。" />, [view, session, recent]);
+  return <div className="console-shell"><aside className="console-sidebar"><div className="console-brand">✦ Data Agent</div><nav>{nav.map(([id, icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => { setView(id); if (id === 'new-chat') setSession(crypto.randomUUID()); }}><span>{icon}</span>{label}</button>)}</nav><div className="recent-block"><div>最近 <span>⌄</span></div>{recent.length ? recent.map(item => <button key={item.id} onClick={() => setView('new-chat')}>{item.text}</button>) : <small>暂无最近对话</small>}</div><div className="user-id"><span>●</span><div><b>local-user</b><small>用户 ID · u_001</small></div></div></aside><main>{content}</main></div>;
+}
+createRoot(document.getElementById('root')).render(<App />);
