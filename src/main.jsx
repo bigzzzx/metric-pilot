@@ -47,8 +47,7 @@ function Composer({ models, modelId, setModelId, agents, agentId, setAgentId, on
   </form>;
 }
 
-function ChatHome({ session, setSession, addRecent }) {
-  const [messages, setMessages] = useState([]);
+function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConversation }) {
   const [models, setModels] = useState([]);
   const [agents, setAgents] = useState([]);
   const [modelId, setModelId] = useState('');
@@ -57,7 +56,7 @@ function ChatHome({ session, setSession, addRecent }) {
   useEffect(() => { Promise.all([fetch('/api/models').then(r => r.json()), fetch('/api/agents').then(r => r.json())]).then(([modelData, agentData]) => { setModels(modelData); setAgents(agentData); setModelId(modelData[0]?.id || ''); setAgentId(agentData[0]?.id || 'data-agent'); }); }, []);
   const send = async text => {
     const message = text.trim(); if (!message || busy) return;
-    setBusy(true); setMessages(items => [...items, { role: 'user', text: message }]); addRecent(message);
+    setBusy(true); setMessages(items => [...items, { role: 'user', text: message }]); onFirstMessage(message);
     try {
       const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, model_id: modelId || null, agent_id: agentId }) });
       const raw = await response.text(); const data = JSON.parse(raw);
@@ -66,9 +65,8 @@ function ChatHome({ session, setSession, addRecent }) {
     } catch (error) { setMessages(items => [...items, { role: 'assistant', data: { intent: 'ERROR', answer: error.message } }]); }
     finally { setBusy(false); }
   };
-  const newConversation = () => { setMessages([]); setSession(crypto.randomUUID()); };
   return <section className="chat-page">
-    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div><button className="new-thread-small" onClick={newConversation}>新对话</button></>}
+    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
   </section>;
 }
 
@@ -77,10 +75,19 @@ function Placeholder({ title, text }) { return <section className="page placehol
 
 function App() {
   const [view, setView] = useState('new-chat');
-  const [session, setSession] = useState(() => crypto.randomUUID());
-  const [recent, setRecent] = useState([]);
-  const addRecent = text => setRecent(items => [{ id: crypto.randomUUID(), text, time: new Date() }, ...items.filter(item => item.text !== text)].slice(0, 6));
-  const content = useMemo(() => view === 'new-chat' ? <ChatHome session={session} setSession={setSession} addRecent={addRecent} /> : view === 'catalog' ? <Catalog /> : view === 'extensions' ? <Placeholder title="智能体扩展" text="后续在此添加用户自己的 Skills、MCP 服务和工具连接。" /> : <Placeholder title="智能体管理" text="后续在此管理 Agent、模型供应商和模型配置。" />, [view, session, recent]);
-  return <div className="console-shell"><aside className="console-sidebar"><div className="console-brand">✦ Data Agent</div><nav>{nav.map(([id, icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => { setView(id); if (id === 'new-chat') setSession(crypto.randomUUID()); }}><span>{icon}</span>{label}</button>)}</nav><div className="recent-block"><div>最近 <span>⌄</span></div>{recent.length ? recent.map(item => <button key={item.id} onClick={() => setView('new-chat')}>{item.text}</button>) : <small>暂无最近对话</small>}</div><div className="user-id"><span>●</span><div><b>local-user</b><small>用户 ID · u_001</small></div></div></aside><main>{content}</main></div>;
+  const [conversations, setConversations] = useState(() => [{ id: crypto.randomUUID(), title: '新对话', messages: [], updatedAt: Date.now() }]);
+  const [activeId, setActiveId] = useState(null);
+  const [recentOpen, setRecentOpen] = useState(true);
+  const active = conversations.find(item => item.id === activeId) || conversations[0];
+  useEffect(() => { if (!activeId) setActiveId(active.id); }, [activeId, active.id]);
+  const createConversation = () => {
+    const item = { id: crypto.randomUUID(), title: '新对话', messages: [], updatedAt: Date.now() };
+    setConversations(items => [item, ...items]); setActiveId(item.id); setView('new-chat');
+  };
+  const updateMessages = updater => setConversations(items => items.map(item => item.id === active.id ? { ...item, messages: typeof updater === 'function' ? updater(item.messages) : updater, updatedAt: Date.now() } : item));
+  const setTitle = text => setConversations(items => items.map(item => item.id === active.id ? { ...item, title: item.title === '新对话' ? text.slice(0, 18) : item.title, updatedAt: Date.now() } : item));
+  const sorted = [...conversations].filter(item => item.messages.length).sort((a, b) => b.updatedAt - a.updatedAt);
+  const content = useMemo(() => view === 'new-chat' ? <ChatHome session={active.id} messages={active.messages} setMessages={updateMessages} onFirstMessage={setTitle} onNewConversation={createConversation} /> : view === 'catalog' ? <Catalog /> : view === 'extensions' ? <Placeholder title="智能体扩展" text="后续在此添加用户自己的 Skills、MCP 服务和工具连接。" /> : <Placeholder title="智能体管理" text="后续在此管理 Agent、模型供应商和模型配置。" />, [view, activeId, conversations]);
+  return <div className="console-shell"><aside className="console-sidebar"><div className="console-brand">✦ Data Agent</div><nav>{nav.map(([id, icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => id === 'new-chat' ? createConversation() : setView(id)}><span>{icon}</span>{label}</button>)}</nav><div className="recent-block"><button className="recent-toggle" onClick={() => setRecentOpen(open => !open)}>最近 <span>{recentOpen ? '⌃' : '⌄'}</span></button>{recentOpen && (sorted.length ? sorted.map(item => <button className={`recent-item ${active.id === item.id && view === 'new-chat' ? 'active' : ''}`} key={item.id} onClick={() => { setActiveId(item.id); setView('new-chat'); }}>{item.title}</button>) : <small>暂无最近对话</small>)}</div><div className="user-id"><span>●</span><div><b>local-user</b><small>用户 ID · u_001</small></div></div></aside><main>{content}</main></div>;
 }
 createRoot(document.getElementById('root')).render(<App />);
