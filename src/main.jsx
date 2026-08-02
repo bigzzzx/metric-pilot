@@ -24,8 +24,14 @@ function AssistantAnswer({ data }) {
 function Composer({ models, modelId, setModelId, agents, agentId, setAgentId, onSend, busy }) {
   const [value, setValue] = useState('');
   const submit = event => { event.preventDefault(); onSend(value); setValue(''); };
+  const handleKeyDown = event => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      if (value.trim() && !busy) { onSend(value); setValue(''); }
+    }
+  };
   return <form className="home-composer" onSubmit={submit}>
-    <textarea value={value} onChange={event => setValue(event.target.value)} placeholder="发消息给 Data Agent…" rows="3" />
+    <textarea value={value} onChange={event => setValue(event.target.value)} onKeyDown={handleKeyDown} placeholder="发消息给 Data Agent…" rows="3" />
     <div className="composer-toolbar">
       <span className="composer-add">＋</span>
       <select aria-label="选择智能体" value={agentId} onChange={e => setAgentId(e.target.value)}>
