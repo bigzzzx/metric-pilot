@@ -1,98 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import catalog from '../metadata/catalog.json';
 import './styles.css';
 import './llm.css';
 
-const samples = ['查询上月华东地区各品类销售额', 'orders 表中 amount 字段含义是什么？', '刷新昨日订单宽表', '删除旧订单表'];
-const navItems = [
-  { id: 'chat', icon: '▣', label: '对话工作台' },
-  { id: 'catalog', icon: '▤', label: '数据目录' },
-  { id: 'jobs', icon: '◷', label: '任务运行' },
-  { id: 'history', icon: '⌕', label: '查询历史' },
-];
+const t = { chat:'对话工作台', catalog:'数据目录', jobs:'任务运行', history:'查询历史', manage:'智能体管理' };
+const samples=['查询 2026 年 7 月华东地区各品类销售额','orders 表中 amount 字段含义是什么？','为什么数码品类销售额最高？','你是什么模型？'];
+const icons={chat:'✦',catalog:'▤',jobs:'◷',history:'◴',manage:'⚙'};
 
-function Trace({ data, compact = false }) {
-  if (!data?.steps?.length) return null;
-  return <div className={`trace ${compact ? 'trace-compact' : ''}`}>{data.steps.map((step, index) => <div className="trace-step" key={`${step.name}-${index}`}><span>{String(index + 1).padStart(2, '0')}</span><div><b>{step.name}</b><small>{step.detail}</small></div></div>)}</div>;
-}
-
-function QueryResult({ data }) {
-  if (!data.result?.length) return null;
-  const columns = Object.keys(data.result[0]);
-  return <div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{data.result.map((row, index) => <tr key={index}>{columns.map((column) => <td key={column}>{row[column]}</td>)}</tr>)}</tbody></table></div>;
-}
-
-function JobStatus({ runId, onUpdate }) {
-  const [job, setJob] = useState({ status: 'RUNNING', logs: [] });
-  useEffect(() => {
-    let active = true;
-    const refresh = async () => {
-      const data = await fetch(`/api/jobs/${runId}`).then((res) => res.json());
-      if (!active) return;
-      setJob(data); onUpdate?.(data);
-    };
-    refresh();
-    const timer = setInterval(refresh, 700);
-    return () => { active = false; clearInterval(timer); };
-  }, [runId, onUpdate]);
-  return <div className="job-status"><div><span className={`status-dot ${job.status === 'SUCCEEDED' ? 'success' : ''}`}></span><b>{job.status === 'SUCCEEDED' ? '任务已完成' : '任务运行中'}</b></div><small>{job.logs?.join(' · ') || '正在准备执行环境…'}</small></div>;
-}
-
-function Answer({ data, onJobUpdate }) {
-  return <article className="answer"><div className="answer-label"><span>✦</span> Data Agent <em>{data.intent}</em></div><p>{data.answer}</p><div className="answer-tags">{data.modelMode === 'deepseek' && <span className="model-tag">DeepSeek</span>}{data.catalog?.length > 0 && <span>Catalog RAG · {data.catalog.map((item) => item.name).join(', ')}</span>}{data.sql && <span className="approved">SQL 已审核</span>}</div>{data.sql && <details><summary>查看最终 SQL</summary><pre>{data.sql}</pre></details>}<QueryResult data={data}/>{data.analysis && <section className="analysis-card"><div><span>✦</span> 数据分析</div><p>{data.analysis}</p></section>}{data.run_id && <JobStatus runId={data.run_id} onUpdate={onJobUpdate}/>}<details className="mobile-trace"><summary>执行详情</summary><Trace data={data} compact /></details></article>;
-}
-
-function ChatWorkspace({ messages, setMessages, setLatest, sessionId }) {
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const send = async (message) => {
-    const text = (message ?? input).trim();
-    if (!text || busy) return;
-    setBusy(true); setMessages((items) => [...items, { role: 'user', text }]);
-    try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, sessionId }) });
-      const data = await response.json();
-      setMessages((items) => [...items, { role: 'agent', data }]); setLatest(data); setInput('');
-    } catch {
-      const data = { answer: '无法连接后端。请确认 API 服务正在运行。', steps: [], intent: 'ERROR' };
-      setMessages((items) => [...items, { role: 'agent', data }]); setLatest(data);
-    } finally { setBusy(false); }
-  };
-  return <section className="workspace chat-workspace"><div className="workspace-title"><div><h1>分析助手</h1><p>Ecommerce Lake · 当前会话</p></div><button className="more" aria-label="更多操作">⋯</button></div><div className="conversation">{messages.length === 0 && <div className="welcome"><h2>今天想了解哪些数据？</h2><p>可以查询业务指标、了解数据目录，或触发受控 ETL 任务。</p><div className="sample-grid">{samples.map((sample) => <button key={sample} onClick={() => send(sample)}>{sample}</button>)}</div></div>}{messages.map((message, index) => message.role === 'user' ? <div className="user-message" key={index}>{message.text}</div> : <Answer key={index} data={message.data} onJobUpdate={(job) => setLatest((current) => current?.run_id === job.run_id ? { ...current, job } : current)} />)}{busy && <div className="thinking"><i></i><i></i><i></i> 正在处理请求</div>}</div><form className="composer" onSubmit={(event) => { event.preventDefault(); send(); }}><input value={input} onChange={(event) => setInput(event.target.value)} placeholder="发送一条数据请求…" /><button aria-label="发送" disabled={busy}>↑</button></form><p className="composer-note">Agent 仅执行只读查询与受控任务。</p></section>;
-}
-
-function CatalogWorkspace() {
-  const [selected, setSelected] = useState(catalog[0]);
-  return <section className="workspace catalog-workspace"><div className="workspace-title"><div><h1>数据目录</h1><p>本地模拟 Glue Data Catalog · {catalog.length} 张表</p></div></div><div className="catalog-layout"><div className="table-list">{catalog.map((table) => <button key={table.name} className={selected.name === table.name ? 'active' : ''} onClick={() => setSelected(table)}><b>{table.name}</b><span>{table.description}</span></button>)}</div><div className="table-detail"><div className="detail-heading"><div><h2>{selected.name}</h2><p>{selected.description}</p></div><span className="schema-badge">TABLE</span></div><h3>字段</h3><div className="field-list">{selected.columns.map(([name, description]) => <div key={name}><code>{name}</code><span>{description}</span></div>)}</div>{selected.relations?.length > 0 && <><h3>关联关系</h3>{selected.relations.map((relation) => <div className="relation" key={relation}>{relation}</div>)}</>}</div></div></section>;
-}
-
-function JobsWorkspace({ latest }) {
-  const job = latest?.job ?? (latest?.run_id ? { status: 'RUNNING', logs: [] } : null);
-  return <section className="workspace"><div className="workspace-title"><div><h1>任务运行</h1><p>模拟 Glue Job 的状态与执行日志</p></div></div>{job ? <div className="job-card"><div><span className={`status-dot ${job.status === 'SUCCEEDED' ? 'success' : ''}`}></span><b>{latest?.run_id ?? 'refresh_order_wide'}</b><p>{job.status ?? 'RUNNING'}</p></div><div className="job-log">{(job.logs?.length ? job.logs : ['任务已创建，等待状态回传。']).map((line) => <p key={line}>› {line}</p>)}</div></div> : <div className="empty-state"><span>◷</span><h2>还没有任务运行</h2><p>在对话中输入“刷新昨日订单宽表”即可看到运行状态。</p></div>}</section>;
-}
-
-function HistoryWorkspace({ messages, setView }) {
-  const questions = messages.filter((item) => item.role === 'user');
-  return <section className="workspace"><div className="workspace-title"><div><h1>查询历史</h1><p>仅保存在当前浏览器会话中</p></div></div>{questions.length ? <div className="history-list">{questions.map((item, index) => <button key={`${item.text}-${index}`} onClick={() => setView('chat')}><span>⌕</span><div>{item.text}<small>本次会话 · 已执行</small></div><b>›</b></button>)}</div> : <div className="empty-state"><span>⌕</span><h2>暂无查询历史</h2><p>你的数据请求会在当前会话中显示在这里。</p></div>}</section>;
-}
-
-function ExecutionPanel({ latest }) {
-  return <aside className="execution-panel"><div className="panel-title"><span>本次执行</span>{latest && <em>{latest.intent}</em>}</div>{latest ? <Trace data={latest} compact /> : <div className="execution-empty"><span>⌘</span><p>提交一个数据请求后，Agent 的检索、审核与执行步骤会显示在这里。</p></div>}</aside>;
-}
-
-function App() {
-  const [view, setView] = useState('chat');
-  const [messages, setMessages] = useState([]);
-  const [latest, setLatest] = useState(null);
-  const [sessionId] = useState(() => crypto.randomUUID());
-  const content = useMemo(() => {
-    if (view === 'catalog') return <CatalogWorkspace />;
-    if (view === 'jobs') return <JobsWorkspace latest={latest} />;
-    if (view === 'history') return <HistoryWorkspace messages={messages} setView={setView} />;
-    return <ChatWorkspace messages={messages} setMessages={setMessages} setLatest={setLatest} sessionId={sessionId} />;
-  }, [view, messages, latest, sessionId]);
-  return <div className="app-shell"><aside className="sidebar"><div className="brand"><span>✦</span> Data Agent</div><nav>{navItems.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="sidebar-status"><span></span><div>LOCAL MODE<small>服务运行正常</small></div></div></aside><main>{content}</main><ExecutionPanel latest={latest} /></div>;
-}
-
-createRoot(document.getElementById('root')).render(<App />);
+function Trace({data}){return <div className="trace">{(data?.steps||[]).map((s,i)=><div className="trace-step" key={s.name}><span>{String(i+1).padStart(2,'0')}</span><div><b>{s.name}</b><small>{s.detail}</small></div></div>)}</div>}
+function Result({data}){if(!data.result?.length)return null;const cols=Object.keys(data.result[0]);return <div className="table-wrap"><table><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{data.result.map((r,i)=><tr key={i}>{cols.map(c=><td key={c}>{r[c]}</td>)}</tr>)}</tbody></table></div>}
+function Answer({data}){return <article className="answer"><div className="answer-label"><span>✦</span> Data Agent <em>{data.intent}</em></div><p>{data.answer}</p><div className="answer-tags"><span className="model-tag">Configured LLM</span>{data.catalog?.length>0&&<span>Catalog RAG · {data.catalog.map(x=>x.name).join(', ')}</span>}{data.sql&&<span className="approved">SQL 已审核</span>}</div>{data.sql&&<details><summary>查看最终 SQL</summary><pre>{data.sql}</pre></details>}<Result data={data}/>{data.analysis&&data.sql&&<section className="analysis-card"><div>✦ 数据分析</div><p>{data.analysis}</p></section>}</article>}
+function Chat({messages,setMessages,setLatest,sessionId}){const [input,setInput]=useState('');const [busy,setBusy]=useState(false);async function send(value){const message=(value||input).trim();if(!message||busy)return;setBusy(true);setMessages(v=>[...v,{role:'user',text:message}]);try{const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,session_id:sessionId})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'请求失败');setMessages(v=>[...v,{role:'agent',data}]);setLatest(data);setInput('')}catch(e){const data={intent:'ERROR',answer:`${e.message}。请确认 FastAPI 服务正在运行，并在智能体管理中完成模型配置。`,steps:[]};setMessages(v=>[...v,{role:'agent',data}]);setLatest(data)}finally{setBusy(false)}}return <section className="workspace chat-workspace"><Header title="分析助手" sub="Ecommerce Lake · 当前会话"/><div className="conversation">{!messages.length&&<div className="welcome"><h2>今天想了解哪些数据？</h2><p>直接像聊天一样提问。Agent 会自行判断何时解释、检索目录或生成只读 SQL。</p><div className="sample-grid">{samples.map(x=><button key={x} onClick={()=>send(x)}>{x}</button>)}</div></div>}{messages.map((m,i)=>m.role==='user'?<div className="user-message" key={i}>{m.text}</div>:<Answer data={m.data} key={i}/>)}{busy&&<div className="thinking"><i/><i/><i/> 正在调用模型</div>}</div><form className="composer" onSubmit={e=>{e.preventDefault();send()}}><input value={input} onChange={e=>setInput(e.target.value)} placeholder="发送一条数据请求…"/><button disabled={busy}>↑</button></form><p className="composer-note">工具层只执行白名单目录中的只读查询。</p></section>}
+function Header({title,sub,action}){return <div className="workspace-title"><div><h1>{title}</h1><p>{sub}</p></div>{action}</div>}
+function Catalog(){const [selected,setSelected]=useState(catalog[0]);return <section className="workspace catalog-workspace"><Header title="数据目录" sub={`本地模拟 Glue Data Catalog · ${catalog.length} 张表`}/><div className="catalog-layout"><div className="table-list">{catalog.map(x=><button key={x.name} className={selected.name===x.name?'active':''} onClick={()=>setSelected(x)}><b>{x.name}</b><span>{x.description}</span></button>)}</div><div className="table-detail"><div className="detail-heading"><div><h2>{selected.name}</h2><p>{selected.description}</p></div><span className="schema-badge">TABLE</span></div><h3>字段</h3><div className="field-list">{selected.columns.map(([n,d])=><div key={n}><code>{n}</code><span>{d}</span></div>)}</div></div></div></section>}
+function History({messages,setView}){const qs=messages.filter(x=>x.role==='user');return <section className="workspace"><Header title="查询历史" sub="当前浏览器会话"/>{qs.length?<div className="history-list">{qs.map((x,i)=><button key={i} onClick={()=>setView('chat')}><span>◴</span><div>{x.text}<small>本次会话 · 已执行</small></div><b>›</b></button>)}</div>:<div className="empty-state"><span>◴</span><h2>暂无查询历史</h2><p>在对话中提交问题后，它会显示在这里。</p></div>}</section>}
+function Jobs(){return <section className="workspace"><Header title="任务运行" sub="本地模拟 Glue Job 的状态与日志"/><div className="empty-state"><span>◷</span><h2>暂无任务运行</h2><p>当前版本将 ETL 保持为受控工具边界，后续可连接真实 Glue Job。</p></div></section>}
+function Manage(){const [providers,setProviders]=useState([]),[models,setModels]=useState([]),[agents,setAgents]=useState([]),[tab,setTab]=useState('agents'),[form,setForm]=useState({name:'',base_url:'',api_key:'',model_id:'',provider_id:''}),[notice,setNotice]=useState('');const load=()=>Promise.all([fetch('/api/providers').then(x=>x.json()),fetch('/api/models').then(x=>x.json()),fetch('/api/agents').then(x=>x.json())]).then(([p,m,a])=>{setProviders(p);setModels(m);setAgents(a)}).catch(()=>setNotice('无法连接 FastAPI 服务。'));useEffect(load,[]);async function addProvider(e){e.preventDefault();const r=await fetch('/api/providers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:form.name,base_url:form.base_url,api_key:form.api_key})});if(!r.ok){setNotice('保存供应商失败');return}setNotice('供应商已加密保存；请继续创建模型。');setForm({name:'',base_url:'',api_key:'',model_id:'',provider_id:''});load()}async function addModel(e){e.preventDefault();const r=await fetch('/api/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider_id:form.provider_id,model_id:form.model_id,display_name:form.model_id})});if(!r.ok){setNotice('保存模型失败');return}setNotice('模型已添加。');setForm({...form,model_id:''});load()}return <section className="workspace manage-workspace"><Header title="智能体管理" sub="供应商、模型与 Agent 都可在本地配置；密钥仅加密保存在 .data/platform.db。"/><div className="manage-tabs"><button className={tab==='agents'?'active':''} onClick={()=>setTab('agents')}>智能体</button><button className={tab==='models'?'active':''} onClick={()=>setTab('models')}>模型供应商</button></div>{notice&&<p className="notice">{notice}</p>}{tab==='agents'?<><div className="agent-grid">{agents.map(a=><article className="agent-card" key={a.id}><div className="agent-avatar">✦</div><h2>{a.name}</h2><code>{a.id}</code><p>{a.description}</p><div className="agent-tools">{a.tools.map(x=><span key={x}>{x}</span>)}</div><button onClick={()=>setNotice('该智能体已是对话工作台默认 Agent。')}>去对话</button></article>)}</div><p className="manage-hint">创建新智能体的 API 已准备好；演示默认 Agent 已绑定当前启用模型。</p></>:<div className="provider-layout"><div><h2 className="section-heading">已配置供应商</h2><div className="provider-grid">{providers.map(p=><article className="provider-card" key={p.id}><div><b>{p.name}</b><em>{p.enabled?'已启用':'未启用'}</em></div><p>OpenAI Compatible API</p><code>{p.base_url}</code><small>Key {p.api_key_mask||'未配置'}</small></article>)}</div><form className="config-form" onSubmit={addProvider}><h2>新增供应商</h2><input required placeholder="供应商名称，如 Ollama / vLLM" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><input required placeholder="Base URL，如 http://localhost:11434/v1" value={form.base_url} onChange={e=>setForm({...form,base_url:e.target.value})}/><input placeholder="API Key（本地模型可留空）" type="password" value={form.api_key} onChange={e=>setForm({...form,api_key:e.target.value})}/><button>保存供应商</button></form><form className="config-form" onSubmit={addModel}><h2>新增模型</h2><select required value={form.provider_id} onChange={e=>setForm({...form,provider_id:e.target.value})}><option value="">选择供应商</option>{providers.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select><input required placeholder="模型 ID，如 deepseek-v4-flash" value={form.model_id} onChange={e=>setForm({...form,model_id:e.target.value})}/><button>保存模型</button></form></div><div className="model-list"><h2 className="section-heading">模型</h2>{models.map(m=><div key={m.id}><b>{m.display_name}</b><span>{providers.find(p=>p.id===m.provider_id)?.name||'未知供应商'} · {m.model_id}</span></div>)}</div></div>}</section>}
+function App(){const [view,setView]=useState('chat'),[messages,setMessages]=useState([]),[latest,setLatest]=useState(null);const sessionId=React.useMemo(()=>crypto.randomUUID(),[]);const content=view==='chat'?<Chat {...{messages,setMessages,setLatest,sessionId}}/>:view==='catalog'?<Catalog/>:view==='history'?<History messages={messages} setView={setView}/>:view==='manage'?<Manage/>:<Jobs/>;return <div className="app-shell"><aside className="sidebar"><div className="brand"><span>✦</span> Data Agent</div><nav>{Object.entries(t).map(([id,label])=><button key={id} className={view===id?'active':''} onClick={()=>setView(id)}><span>{icons[id]}</span>{label}</button>)}</nav><div className="sidebar-status"><span/><div>LOCAL MODE<small>FastAPI · LangGraph</small></div></div></aside><main>{content}</main><aside className="execution-panel"><div className="panel-title"><span>本次执行</span>{latest&&<em>{latest.intent}</em>}</div>{latest?<Trace data={latest}/>:<div className="execution-empty"><span>◴</span><p>提交一个问题后，Agent 的规划、审核与执行步骤会显示在这里。</p></div>}</aside></div>}
+createRoot(document.getElementById('root')).render(<App/>);
