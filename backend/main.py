@@ -2,6 +2,7 @@
 import json
 import os
 import uuid
+import httpx
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +79,20 @@ def update_provider(provider_id: str, payload: ProviderUpdate):
     if not old: con.close(); raise HTTPException(404, "Provider not found")
     encrypted=secrets().encrypt(payload.api_key.encode()).decode() if payload.api_key else old["api_key"]
     con.execute("UPDATE providers SET name=?,kind=?,base_url=?,api_key=?,enabled=? WHERE id=?", (payload.name,payload.kind,payload.base_url.rstrip("/"),encrypted,int(payload.enabled),provider_id)); con.commit(); con.close(); return {"id":provider_id, **payload.model_dump(exclude={"api_key"})}
+@app.get("/api/providers/{provider_id}/models/discover")
+async def discover_provider_models(provider_id: str):
+    con=db(); row=con.execute("SELECT * FROM providers WHERE id=?",(provider_id,)).fetchone(); con.close()
+    if not row: raise HTTPException(404,"Provider not found")
+    if row["kind"] == "anthropic-messages": return {"models":[],"message":"Anthropic model discovery is not exposed by this demo; add a model ID manually."}
+    key=secrets().decrypt(row["api_key"].encode()).decode() if row["api_key"] else ""
+    try:
+        async with httpx.AsyncClient(timeout=12,trust_env=False) as client:
+            if row["kind"] == "ollama":
+                url=row["base_url"].replace("/v1","").rstrip("/")+"/api/tags"; res=await client.get(url); data=res.json(); ids=[item["name"] for item in data.get("models",[])]
+            else:
+                res=await client.get(row["base_url"].rstrip("/")+"/models",headers={"Authorization":f"Bearer {key}"} if key else {}); data=res.json(); ids=[item["id"] for item in data.get("data",[])]
+        res.raise_for_status(); return {"models":ids}
+    except (httpx.HTTPError,KeyError,ValueError) as exc: return {"models":[],"message":f"Could not discover models: {str(exc)[:100]}"}
 @app.get("/api/models")
 def models():
     con=db(); rows=[{**dict(r),"enabled":bool(r["enabled"])} for r in con.execute("SELECT * FROM models")]; con.close(); return rows
