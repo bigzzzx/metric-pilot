@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from backend.model_client import complete_json
 from backend.rag import prompt_context, retrieve
 from backend.tools.sql_tool import run_readonly_sql
+from backend.agent_config import has_tool
 
 
 class AgentState(TypedDict, total=False):
@@ -42,7 +43,7 @@ Return JSON only: {{"route":"general|data_query|data_analysis|etl"}}.
 Use data_analysis ONLY when a recent query result exists AND the user is asking to interpret, compare,
 explain, or extend that result. Use data_query for metadata, metrics, business data, tables, fields or SQL.
 Use general for unrelated general questions.''' 
-    decision = await complete_json(state["agent_id"], messages(state, prompt), state.get("model_id"))
+    decision = await complete_json("data-query-agent", messages(state, prompt), state.get("model_id"))
     route = decision.get("route", "general")
     if route == "data_analysis" and not has_result: route = "data_query"
     if route not in {"general", "data_query", "data_analysis", "etl"}: route = "general"
@@ -55,10 +56,12 @@ def route_after_router(state: AgentState) -> str:
 
 async def general_agent(state: AgentState) -> AgentState:
     prompt = 'You are the General Agent. Answer naturally in Chinese. Do not claim to query platform data. Return JSON only: {"answer":"Chinese answer"}.'
-    return {**state, "final": await complete_json(state["agent_id"], messages(state, prompt), state.get("model_id"))}
+    return {**state, "final": await complete_json("general-agent", messages(state, prompt), state.get("model_id"))}
 
 
 async def rag_retrieve(state: AgentState) -> AgentState:
+    if not has_tool("data-query-agent", "catalog_rag"):
+        return {**state, "rag": []}
     return {**state, "rag": retrieve(state["message"], fallback=False)}
 
 
@@ -67,7 +70,7 @@ async def data_query_agent(state: AgentState) -> AgentState:
     prompt = '''You are the Data Query Agent. Use only the supplied RAG evidence. Answer metadata questions directly;
 generate SQL only if data must be queried. SQL must be one SQLite SELECT/WITH statement. Return JSON only:
 {"answer":"Chinese answer","sql":"optional SQL"}. RAG evidence:\n''' + evidence
-    return {**state, "plan": await complete_json(state["agent_id"], messages(state, prompt), state.get("model_id"))}
+    return {**state, "plan": await complete_json("data-query-agent", messages(state, prompt), state.get("model_id"))}
 
 
 def route_after_plan(state: AgentState) -> str:
@@ -75,6 +78,8 @@ def route_after_plan(state: AgentState) -> str:
 
 
 def query_tool(state: AgentState) -> AgentState:
+    if not has_tool("data-query-agent", "readonly_sql"):
+        return {**state, "query_error": "Data Query Agent is not allowed to use readonly_sql", "repair_attempts": 1}
     sql = str(state["plan"].get("sql") or "").strip()
     try:
         return {**state, "sql": sql, "result": run_readonly_sql(sql)}
@@ -90,7 +95,7 @@ def route_after_query(state: AgentState) -> str:
 async def repair_sql(state: AgentState) -> AgentState:
     prompt = f'''You are SQL Repair Agent. Fix the failed SQLite SQL using RAG context only. Error: {state["query_error"]}.
 Original SQL: {state["sql"]}. Return JSON only: {{"sql":"one corrected SELECT/WITH"}}.\nRAG:\n''' + prompt_context(state["message"], state.get("rag", []))
-    repaired = await complete_json(state["agent_id"], messages(state, prompt), state.get("model_id"))
+    repaired = await complete_json("data-query-agent", messages(state, prompt), state.get("model_id"))
     return {**state, "plan": {"sql": repaired.get("sql", "")}, "repair_attempts": state.get("repair_attempts", 0) + 1, "query_error": ""}
 
 
@@ -100,12 +105,14 @@ async def data_analysis_agent(state: AgentState) -> AgentState:
 You may explain implications and suggest next analyses, but never invent data. Return JSON only:
 {"answer":"full Chinese analysis","summary":"core conclusion","insights":["..."],"limitations":["..."],"follow_up_questions":["..."]}.
 RAG evidence:\n''' + prompt_context(state["message"], state.get("rag", [])) + "\nTrusted result:\n" + json.dumps(result, ensure_ascii=False)
-    return {**state, "result": result, "final": await complete_json(state["agent_id"], messages(state, prompt, include_result=True), state.get("model_id"))}
+    if not has_tool("data-analysis-agent", "query_result_analysis"):
+        return {**state, "result": result, "final": {"answer": "Data Analysis Agent is disabled or lacks query-result permission."}}
+    return {**state, "result": result, "final": await complete_json("data-analysis-agent", messages(state, prompt, include_result=True), state.get("model_id"))}
 
 
 async def etl_agent(state: AgentState) -> AgentState:
     prompt = 'You are the ETL Agent. Explain that ETL task execution is a controlled extension point in this demo. Return JSON only: {"answer":"Chinese answer"}.'
-    return {**state, "final": await complete_json(state["agent_id"], messages(state, prompt), state.get("model_id"))}
+    return {**state, "final": await complete_json("data-query-agent", messages(state, prompt), state.get("model_id"))}
 
 
 def failed_query(state: AgentState) -> AgentState:

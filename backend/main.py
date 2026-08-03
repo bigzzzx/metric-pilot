@@ -23,7 +23,16 @@ def init_storage():
         provider_id, model_id = str(uuid.uuid4()), str(uuid.uuid4())
         con.execute("INSERT INTO providers VALUES (?,?,?,?,?,1)", (provider_id,"DeepSeek","openai-compatible",os.getenv("DEEPSEEK_BASE_URL","https://api.deepseek.com"),secrets().encrypt(os.environ["DEEPSEEK_API_KEY"].encode()).decode()))
         con.execute("INSERT INTO models VALUES (?,?,?,?,1)", (model_id,provider_id,os.getenv("DEEPSEEK_MODEL","deepseek-v4-flash"),"DeepSeek V4 Flash"))
-        con.execute("INSERT INTO agents VALUES (?,?,?,?,?,?,1)", ("data-agent","Data Agent","Local data analysis agent",model_id,json.dumps(["catalog_rag","readonly_sql","etl"]),"You are a careful Chinese data agent."))
+        con.execute("INSERT INTO agents VALUES (?,?,?,?,?,?,1)", ("data-agent","Data Agent","Legacy default agent",model_id,json.dumps(["catalog_rag","readonly_sql","etl"]),"You are a careful Chinese data agent."))
+    default_model = con.execute("SELECT id FROM models WHERE enabled=1 LIMIT 1").fetchone()
+    if default_model:
+        configured_agents = [
+            ("general-agent", "General Agent", "回答通用问题，不调用数据工具。", ["chat"], "你是一个友好、可靠的通用中文助手。回答日常问题时不要声称查询了业务数据。"),
+            ("data-query-agent", "Data Query Agent", "检索数据资产知识并按需生成安全 SQL。", ["catalog_rag", "readonly_sql"], "你是严谨的数据查询智能体。只能依据 RAG 元数据和允许的工具处理数据问题。"),
+            ("data-analysis-agent", "Data Analysis Agent", "基于可信查询结果生成业务分析。", ["catalog_rag", "query_result_analysis"], "你是业务数据分析师。只能依据可信查询结果和指标口径给出结论、限制与后续分析建议。"),
+        ]
+        for agent_id, name, description, tools, prompt in configured_agents:
+            con.execute("INSERT OR IGNORE INTO agents VALUES (?,?,?,?,?,?,1)", (agent_id, name, description, default_model["id"], json.dumps(tools), prompt))
     con.commit(); con.close()
 
 
@@ -32,7 +41,7 @@ class ProviderIn(BaseModel):
 class ModelIn(BaseModel):
     provider_id: str; model_id: str; display_name: str; enabled: bool = True
 class ChatIn(BaseModel):
-    message: str = Field(min_length=1); session_id: str = "default"; agent_id: str = "data-agent"; model_id: str | None = None
+    message: str = Field(min_length=1); session_id: str = "default"; model_id: str | None = None
 
 
 app = FastAPI(title="Local Data Agent Platform")
@@ -59,7 +68,7 @@ def agents():
 @app.post("/api/chat")
 async def chat(x:ChatIn):
     con=db(); history=[dict(r) for r in con.execute("SELECT role,content FROM sessions WHERE session_id=? ORDER BY created_at",(x.session_id,))]; con.close()
-    state=await run_agent(x.message,x.agent_id,history,x.model_id); plan=state.get("plan",{}); final=state.get("final",plan); answer=str(final.get("answer") or "I have processed your request.")
+    state=await run_agent(x.message,"data-query-agent",history,x.model_id); plan=state.get("plan",{}); final=state.get("final",plan); answer=str(final.get("answer") or "I have processed your request.")
     con=db(); con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"user",x.message));
     if state.get("result") is not None: con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"user","Tool result: "+json.dumps(state["result"],ensure_ascii=False)))
     con.execute("INSERT INTO sessions(session_id,role,content) VALUES (?,?,?)",(x.session_id,"assistant",answer)); con.commit(); con.close()

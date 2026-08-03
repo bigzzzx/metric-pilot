@@ -21,7 +21,7 @@ function AssistantAnswer({ data }) {
   </article>;
 }
 
-function Composer({ models, modelId, setModelId, agents, agentId, setAgentId, onSend, busy }) {
+function Composer({ models, modelId, setModelId, onSend, busy }) {
   const [value, setValue] = useState('');
   const submit = event => { event.preventDefault(); onSend(value); setValue(''); };
   const handleKeyDown = event => {
@@ -34,9 +34,6 @@ function Composer({ models, modelId, setModelId, agents, agentId, setAgentId, on
     <textarea value={value} onChange={event => setValue(event.target.value)} onKeyDown={handleKeyDown} placeholder="发消息给 Data Agent…" rows="3" />
     <div className="composer-toolbar">
       <span className="composer-add">＋</span>
-      <select aria-label="选择智能体" value={agentId} onChange={e => setAgentId(e.target.value)}>
-        {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-      </select>
       <span className="toolbar-spacer" />
       <select aria-label="选择模型" value={modelId} onChange={e => setModelId(e.target.value)}>
         <option value="">默认模型</option>
@@ -49,16 +46,14 @@ function Composer({ models, modelId, setModelId, agents, agentId, setAgentId, on
 
 function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConversation }) {
   const [models, setModels] = useState([]);
-  const [agents, setAgents] = useState([]);
   const [modelId, setModelId] = useState('');
-  const [agentId, setAgentId] = useState('data-agent');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { Promise.all([fetch('/api/models').then(r => r.json()), fetch('/api/agents').then(r => r.json())]).then(([modelData, agentData]) => { setModels(modelData); setAgents(agentData); setModelId(modelData[0]?.id || ''); setAgentId(agentData[0]?.id || 'data-agent'); }); }, []);
+  useEffect(() => { fetch('/api/models').then(r => r.json()).then(modelData => { setModels(modelData); setModelId(modelData[0]?.id || ''); }); }, []);
   const send = async text => {
     const message = text.trim(); if (!message || busy) return;
     setBusy(true); setMessages(items => [...items, { role: 'user', text: message }]); onFirstMessage(message);
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, model_id: modelId || null, agent_id: agentId }) });
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, model_id: modelId || null }) });
       const raw = await response.text(); const data = JSON.parse(raw);
       if (!response.ok) throw Error(data.detail || '请求失败');
       setMessages(items => [...items, { role: 'assistant', data }]);
@@ -66,7 +61,7 @@ function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConvers
     finally { setBusy(false); }
   };
   return <section className="chat-page">
-    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ models, modelId, setModelId, agents, agentId, setAgentId, onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
+    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ models, modelId, setModelId, onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ models, modelId, setModelId, onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
   </section>;
 }
 
