@@ -23,7 +23,6 @@ def init_storage():
         provider_id, model_id = str(uuid.uuid4()), str(uuid.uuid4())
         con.execute("INSERT INTO providers VALUES (?,?,?,?,?,1)", (provider_id,"DeepSeek","openai-compatible",os.getenv("DEEPSEEK_BASE_URL","https://api.deepseek.com"),secrets().encrypt(os.environ["DEEPSEEK_API_KEY"].encode()).decode()))
         con.execute("INSERT INTO models VALUES (?,?,?,?,1)", (model_id,provider_id,os.getenv("DEEPSEEK_MODEL","deepseek-v4-flash"),"DeepSeek V4 Flash"))
-        con.execute("INSERT INTO agents VALUES (?,?,?,?,?,?,1)", ("data-agent","Data Agent","Legacy default agent",model_id,json.dumps(["catalog_rag","readonly_sql","etl"]),"You are a careful Chinese data agent."))
     default_model = con.execute("SELECT id FROM models WHERE enabled=1 LIMIT 1").fetchone()
     if default_model:
         configured_agents = [
@@ -33,6 +32,9 @@ def init_storage():
         ]
         for agent_id, name, description, tools, prompt in configured_agents:
             con.execute("INSERT OR IGNORE INTO agents VALUES (?,?,?,?,?,?,1)", (agent_id, name, description, default_model["id"], json.dumps(tools), prompt))
+    # The pre-LangGraph single-agent configuration is obsolete. Runtime nodes
+    # use the three role-specific configurations above.
+    con.execute("DELETE FROM agents WHERE id='data-agent'")
     con.commit(); con.close()
 
 
