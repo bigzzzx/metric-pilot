@@ -21,7 +21,7 @@ function AssistantAnswer({ data }) {
   </article>;
 }
 
-function Composer({ models, modelId, setModelId, onSend, busy }) {
+function Composer({ onSend, busy }) {
   const [value, setValue] = useState('');
   const submit = event => { event.preventDefault(); onSend(value); setValue(''); };
   const handleKeyDown = event => {
@@ -35,25 +35,18 @@ function Composer({ models, modelId, setModelId, onSend, busy }) {
     <div className="composer-toolbar">
       <span className="composer-add">＋</span>
       <span className="toolbar-spacer" />
-      <select aria-label="选择模型" value={modelId} onChange={e => setModelId(e.target.value)}>
-        <option value="">默认模型</option>
-        {models.filter(model => model.enabled).map(model => <option key={model.id} value={model.id}>{model.display_name}</option>)}
-      </select>
       <button type="submit" disabled={busy || !value.trim()} aria-label="发送">↑</button>
     </div>
   </form>;
 }
 
 function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConversation }) {
-  const [models, setModels] = useState([]);
-  const [modelId, setModelId] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { fetch('/api/models').then(r => r.json()).then(modelData => { setModels(modelData); setModelId(modelData[0]?.id || ''); }); }, []);
   const send = async text => {
     const message = text.trim(); if (!message || busy) return;
     setBusy(true); setMessages(items => [...items, { role: 'user', text: message }]); onFirstMessage(message);
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, model_id: modelId || null }) });
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session }) });
       const raw = await response.text(); const data = JSON.parse(raw);
       if (!response.ok) throw Error(data.detail || '请求失败');
       setMessages(items => [...items, { role: 'assistant', data }]);
@@ -61,7 +54,7 @@ function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConvers
     finally { setBusy(false); }
   };
   return <section className="chat-page">
-    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ models, modelId, setModelId, onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ models, modelId, setModelId, onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
+    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={index}>{item.text}</div> : <AssistantAnswer key={index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
   </section>;
 }
 
