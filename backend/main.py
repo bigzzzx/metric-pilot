@@ -40,6 +40,8 @@ class ProviderIn(BaseModel):
     name: str; base_url: str; api_key: str = ""; kind: str = "openai-compatible"; enabled: bool = True
 class ModelIn(BaseModel):
     provider_id: str; model_id: str; display_name: str; enabled: bool = True
+class AgentUpdate(BaseModel):
+    name: str; description: str; model_id: str; tools: list[str]; system_prompt: str; enabled: bool = True
 class ChatIn(BaseModel):
     message: str = Field(min_length=1); session_id: str = "default"; model_id: str | None = None
 
@@ -65,6 +67,15 @@ def model(x:ModelIn):
 @app.get("/api/agents")
 def agents():
     con=db(); rows=[{**dict(r),"tools":json.loads(r["tools"]),"enabled":bool(r["enabled"])} for r in con.execute("SELECT * FROM agents")]; con.close(); return rows
+@app.put("/api/agents/{agent_id}")
+def update_agent(agent_id: str, payload: AgentUpdate):
+    con=db()
+    if not con.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone():
+        con.close(); raise HTTPException(404, "Agent not found")
+    if not con.execute("SELECT 1 FROM models WHERE id=?", (payload.model_id,)).fetchone():
+        con.close(); raise HTTPException(404, "Model not found")
+    con.execute("UPDATE agents SET name=?,description=?,model_id=?,tools=?,system_prompt=?,enabled=? WHERE id=?", (payload.name, payload.description, payload.model_id, json.dumps(payload.tools), payload.system_prompt, int(payload.enabled), agent_id))
+    con.commit(); con.close(); return {"id":agent_id, **payload.model_dump()}
 @app.post("/api/chat")
 async def chat(x:ChatIn):
     con=db(); history=[dict(r) for r in con.execute("SELECT role,content FROM sessions WHERE session_id=? ORDER BY created_at",(x.session_id,))]; con.close()
