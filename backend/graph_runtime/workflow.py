@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 
 from backend.graph_runtime.events import emit
 from backend.observability import log_event
+from backend.model_reliability import model_node
 
 NODES = {
     "router": ("router", "正在理解问题"),
@@ -34,14 +35,22 @@ def build_graph(namespace: dict):
             emit({"event": "status", "label": label, "node": node})
             started = time.perf_counter()
             function = namespace[function_name]
+            token = model_node.set(node)
+            status = "success"
             try:
                 if inspect.iscoroutinefunction(function):
                     return await function(state)
                 return await asyncio.to_thread(function, state)
+            except BaseException as exc:
+                status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "error"
+                log_event("graph.node_failed", level=30, node=node, error_type=type(exc).__name__,
+                          error_code=getattr(exc, "code", None))
+                raise
             finally:
                 duration = round((time.perf_counter() - started) * 1000, 2)
-                emit({"event": "node_completed", "node": node, "duration_ms": duration})
-                log_event("graph.node_completed", node=node, duration_ms=duration)
+                emit({"event": "node_completed", "node": node, "duration_ms": duration, "status": status})
+                log_event("graph.node_completed", node=node, duration_ms=duration, status=status)
+                model_node.reset(token)
         return execute
 
     for node, (function, label) in NODES.items():

@@ -1,16 +1,26 @@
 """Adapt LangGraph events to the existing frontend protocol; never dispatch nodes."""
 import time
+from contextlib import aclosing
 
 from backend.graph_runtime.events import streaming_answer
 from backend.observability import log_event
+from backend.model_reliability import model_budget
 
 
 async def stream_graph(graph, initial: dict, output_keys: set[str]):
+    with model_budget():
+        async with aclosing(_stream_graph(graph, initial, output_keys)) as stream:
+            async for event in stream:
+                yield event
+
+
+async def _stream_graph(graph, initial: dict, output_keys: set[str]):
     token = streaming_answer.set(True)
     started = time.perf_counter()
     state = {}
     emitted_answer = False
     first_token_ms = None
+    succeeded = False
     try:
         async for mode, payload in graph.astream(initial, stream_mode=["custom", "updates"]):
             if mode == "custom":
@@ -33,8 +43,9 @@ async def stream_graph(graph, initial: dict, output_keys: set[str]):
             if answer:
                 # Deterministic tool/clarification messages are not model token streams.
                 yield {"event": "delta", "content": answer}
+        succeeded = True
         yield {"event": "done", "state": state}
     finally:
         streaming_answer.reset(token)
         log_event("graph.completed", duration_ms=round((time.perf_counter() - started) * 1000, 2),
-                  first_token_ms=first_token_ms)
+                  first_token_ms=first_token_ms, status="success" if succeeded else "interrupted")

@@ -58,7 +58,7 @@ def evaluation_environment(directory):
                     SQL_ATTEMPTS[-1]["error"] = str(exc.detail)
                 return ToolResult(status=ToolStatus.DENIED if exc.status_code == 403 else ToolStatus.FAILED,
                                   tool_id=tool_id, call_id=context.call_id,
-                                  error={"code": "permission_denied" if exc.status_code == 403 else "sql_error", "message": str(exc.detail)})
+                                  error={"code": "permission_denied" if exc.status_code == 403 else getattr(exc, "code", "sql_error"), "message": str(exc.detail)})
 
     with ExitStack() as stack:
         for module in (rag_documents, retrieval, service, sql_tool):

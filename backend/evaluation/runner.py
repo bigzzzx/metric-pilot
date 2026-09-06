@@ -40,7 +40,7 @@ async def live_case(case):
                 if event["event"] == "delta" and first is None:
                     first = round((time.perf_counter() - started) * 1000, 2)
                 if event["event"] == "node_completed":
-                    nodes.append({key: event[key] for key in ("node", "duration_ms")})
+                    nodes.append({key: event.get(key) for key in ("node", "duration_ms", "status")})
                 if event["event"] == "done":
                     state = event["state"]
         if state is None:
@@ -57,9 +57,11 @@ async def live_case(case):
         return {"id": case.id, "status": "passed" if passed else "failed", "first_response_ms": first,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2), "nodes": nodes,
                 "sql": state.get("sql"), "rows": state.get("result"), "answer": answer,
-                "sql_attempts": list(SQL_ATTEMPTS)}
+                "sql_attempts": list(SQL_ATTEMPTS), "tool_error": state.get("tool_result", {}).get("error")}
     except Exception as exc:
-        return {"id": case.id, "status": "error", "error_type": type(exc).__name__, "nodes": nodes,
+        return {"id": case.id, "status": "error", "error_type": type(exc).__name__,
+                "error_code": getattr(exc, "code", None), "http_status": getattr(exc, "status", None),
+                "cause_type": type(exc.__cause__).__name__ if exc.__cause__ else None, "nodes": nodes,
                 "sql_attempts": list(SQL_ATTEMPTS),
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2)}
 
