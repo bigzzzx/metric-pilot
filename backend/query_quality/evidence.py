@@ -1,0 +1,71 @@
+"""Bounded, permission-scoped business definitions for query planning."""
+import hashlib
+import json
+
+from backend.catalog.rag_documents import authorized_catalog_documents
+
+
+def retrieval_question(state: dict) -> str:
+    """Expand an explicitly contextual turn without an additional model call."""
+    question = state["message"]
+    if not state.get("contextual_follow_up"):
+        return question
+    recent = [item["content"] for item in state.get("history", [])
+              if item.get("role") == "user" and not item.get("content", "").startswith("Tool result:")]
+    context = "\n".join(recent[-2:])[-800:]
+    summary = str(state.get("conversation_summary") or "")[-400:]
+    return f"{question}\n最近数据话题：{context}\n会话摘要：{summary}"
+
+
+def fingerprint(document: dict) -> str:
+    payload = {key: document.get(key) for key in ("id", "title", "content", "asset_ids", "domain_id")}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def metric_context(query: str, rag: list[dict], user_id: str) -> list[dict]:
+    if not user_id:
+        return []
+    retrieved_ids = {item.get("id") for item in rag if item.get("kind") == "metric"}
+    metrics = []
+    for item in authorized_catalog_documents(user_id):
+        if item.get("kind") != "metric":
+            continue
+        aliases = [str(word) for word in item.get("keywords", []) if str(word) not in {"指标", "口径"}]
+        explicit = any(word and word.casefold() in query.casefold() for word in aliases)
+        if explicit or item["id"] in retrieved_ids:
+            metrics.append({"id": item["id"], "version": fingerprint(item),
+                            "definition": item["content"], "required": explicit})
+    return sorted(metrics, key=lambda item: not item["required"])[:5]
+
+
+def check_metric_references(plan: dict, metrics: list[dict], user_id: str) -> str | None:
+    """Check evidence identity/freshness, not arbitrary SQL semantic equivalence."""
+    if not plan.get("sql"):
+        return None
+    references = plan.get("metric_refs") or []
+    required = {item["id"] for item in metrics if item.get("required")}
+    cited = {item["id"] for item in references}
+    if required - cited:
+        return "查询计划未引用本次问题对应的指标口径，请补充口径后重新规划。"
+    if not references:
+        return None
+    supplied = {item["id"]: item["version"] for item in metrics}
+    current = {item["id"]: fingerprint(item) for item in authorized_catalog_documents(user_id)
+               if item.get("kind") == "metric"}
+    if any(supplied.get(item["id"]) != item["version"] or current.get(item["id"]) != item["version"]
+           for item in references):
+        return "指标口径已变更、未提供或当前无权访问，请重新提问以获取最新口径。"
+    return None
+
+
+def planning_instructions(metrics: list[dict], examples: list[dict]) -> str:
+    return (
+        "\nBusiness contract: preserve published metric definitions, status filters, units and grain. "
+        "For each used metric copy its id/version exactly into metric_refs. Required metrics must be cited. "
+        "Do not multiply measures through one-to-many joins: aggregate or deduplicate first. "
+        "If time range, metric meaning or join grain is ambiguous, return sql=null and ask a clarification. "
+        "Examples are references only; adapt dates and dimensions to this question. "
+        "Return metric_refs (list of {id,version}), time_column, filters (list of strings), "
+        "join_relationships (list of strings) alongside answer/sql.\n"
+        + json.dumps({"metrics": metrics, "verified_examples": examples}, ensure_ascii=False)
+    )

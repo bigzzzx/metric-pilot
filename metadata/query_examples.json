@@ -1,0 +1,58 @@
+[
+  {
+    "id": "paid_count",
+    "question": "全部已支付订单有多少笔？",
+    "sql": "SELECT COUNT(*) AS n FROM orders WHERE status='PAID'",
+    "validation": "offline-fixture-v1:paid_count",
+    "evidence": [
+      {
+        "id": "catalog:asset:asset-orders",
+        "version": "d93b078567a2fcea91ee3f981519179cabe291de4605747b3ee0fae2f5b12698"
+      }
+    ]
+  },
+  {
+    "id": "east_gmv",
+    "question": "华东用户全部已支付金额是多少？",
+    "sql": "SELECT SUM(o.amount) AS amount FROM orders o JOIN users u ON o.user_id=u.user_id WHERE o.status='PAID' AND u.region='华东'",
+    "validation": "offline-fixture-v1:east_gmv",
+    "evidence": [
+      {
+        "id": "catalog:asset:asset-orders",
+        "version": "d93b078567a2fcea91ee3f981519179cabe291de4605747b3ee0fae2f5b12698"
+      },
+      {
+        "id": "catalog:asset:asset-users",
+        "version": "b97c3b8ef82e50abdb568bcc7b24ac4ffb512cef8f5c1871be05357051cef99f"
+      },
+      {
+        "id": "catalog:relation:orders_user",
+        "version": "a6fc544f50b307849ce67bd9ae51ff7c290c91f8040c33af35fd8bcc6e1262cf"
+      },
+      {
+        "id": "catalog:metric:metric-gmv",
+        "version": "35085078a3caa5d7934515ee03f0f41297529a05b714ed6ee2956d8b7933cd69"
+      }
+    ]
+  },
+  {
+    "id": "one_to_many",
+    "question": "有成功支付记录的订单金额合计是多少？一个订单只能统计一次。",
+    "sql": "SELECT SUM(o.amount) AS amount FROM orders o WHERE EXISTS (SELECT 1 FROM dwd_payment_detail p WHERE p.order_id=o.order_id AND p.payment_status='SUCCESS')",
+    "validation": "offline-fixture-v1:one_to_many",
+    "evidence": [
+      {
+        "id": "catalog:asset:asset-orders",
+        "version": "d93b078567a2fcea91ee3f981519179cabe291de4605747b3ee0fae2f5b12698"
+      },
+      {
+        "id": "catalog:asset:asset-dwd_payment_detail",
+        "version": "23eb7430112d943d7116af0d848de9702d679e2763620d2a9a8c295080fc6cdb"
+      },
+      {
+        "id": "catalog:relation:payment_order",
+        "version": "1810cfb89dc25757235df7e27c94db44b8262477d30532cda1295f8c243b2a50"
+      }
+    ]
+  }
+]
