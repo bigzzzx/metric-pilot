@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据目录 · 语义层演示</title>
+<style>
+  :root{
+    --bg:#0e1116;
+    --bg2:#12161f;
+    --card:#181d28;
+    --card-hover:#1d2331;
+    --border:#262d3d;
+    --border-soft:#212838;
+    --text:#e7eaf1;
+    --text-dim:#9aa3b4;
+    --text-faint:#6b7486;
+    --accent:#4d9fff;
+    --accent-soft:rgba(77,159,255,.14);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--text);
+    min-height:100vh;line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+
+  /* ===== Header ===== */
+  header{
+    padding:18px 28px;border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg,#141926 0%,#10141c 100%);
+    position:sticky;top:0;z-index:10;
+  }
+  .header-inner{max-width:1280px;margin:0 auto}
+  .title-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .logo{
+    width:34px;height:34px;border-radius:9px;flex:0 0 auto;
+    background:linear-gradient(135deg,#4d9fff,#7c5cff);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;
+  }
+  h1{font-size:19px;font-weight:650;letter-spacing:.2px}
+  .subtitle{color:var(--text-dim);font-size:13px;margin-top:1px}
+  .stats{display:flex;gap:26px;margin-top:14px;flex-wrap:wrap}
+  .stat .num{font-size:22px;font-weight:700;color:#fff}
+  .stat .lbl{font-size:12px;color:var(--text-faint)}
+  .stat{display:flex;flex-direction:column;gap:0}
+  .source-badge{
+    display:inline-flex;align-items:center;gap:6px;margin-left:auto;
+    background:var(--card);border:1px solid var(--border);
+    padding:6px 12px;border-radius:20px;font-size:12px;color:var(--text-dim);
+  }
+  .source-badge .dot{width:8px;height:8px;border-radius:50%;background:#34d399}
+
+  /* ===== Notice bar ===== */
+  .notice{
+    max-width:1280px;margin:16px auto 0;padding:12px 16px;
+    background:var(--accent-soft);border:1px solid rgba(77,159,255,.28);
+    border-radius:10px;font-size:13px;color:#cfe4ff;
+    display:flex;gap:10px;align-items:flex-start;
+  }
+  .notice .star{color:#ffd166;font-weight:700;flex:0 0 auto}
+
+  /* ===== Layout ===== */
+  .layout{
+    max-width:1280px;margin:20px auto;padding:0 28px;
+    display:grid;grid-template-columns:300px 1fr;gap:20px;
+  }
+  aside{position:sticky;top:120px;align-self:start;display:flex;flex-direction:column;gap:16px}
+
+  .panel{
+    background:var(--card);border:1px solid var(--border);
+    border-radius:14px;padding:16px;
+  }
+  .panel h2{
+    font-size:12px;text-transform:uppercase;letter-spacing:.8px;
+    color:var(--text-faint);margin-bottom:12px;font-weight:600;
+  }
+
+  /* table list */
+  .table-item{
+    padding:12px 14px;border:1px solid var(--border);border-radius:11px;
+    cursor:pointer;margin-bottom:9px;transition:all .15s;
+    background:var(--bg2);
+  }
+  .table-item:hover{border-color:#33405c;background:var(--card-hover)}
+  .table-item.active{border-color:var(--accent);background:var(--accent-soft)}
+  .table-item .t-name{font-weight:600;font-size:14px}
+  .table-item .t-phys{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:var(--text-faint)}
+  .table-item .t-desc{font-size:12px;color:var(--text-dim);margin-top:4px;line-height:1.45}
+  .role-tag{
+    display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:20px;
+    margin-top:7px;font-weight:600;
+  }
+
+  /* mini lineage */
+  .mini-lineage{display:flex;flex-direction:column;gap:0;align-items:center;padding:6px 0}
+  .mini-node{
+    width:100%;text-align:center;padding:8px 10px;border:1px solid var(--border);
+    border-radius:9px;font-size:12.5px;background:var(--bg2);
+  }
+  .mini-node.fact{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.08)}
+  .mini-edge{color:var(--text-faint);font-size:10.5px;padding:3px 0;font-family:ui-monospace,monospace}
+  .mini-edge::before{content:"↑ ";color:var(--accent)}
+
+  /* ===== Tabs ===== */
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+  .tab{
+    padding:10px 18px;cursor:pointer;font-size:14px;color:var(--text-dim);
+    border-bottom:2px solid transparent;font-weight:500;
+  }
+  .tab:hover{color:var(--text)}
+  .tab.active{color:#fff;border-bottom-color:var(--accent);font-weight:600}
+
+  /* ===== Content ===== */
+  .card{
+    background:var(--card);border:1px solid var(--border);
+    border-radius:14px;padding:20px;margin-bottom:16px;
+  }
+  .card h3{font-size:16px;font-weight:650;margin-bottom:6px}
+  .card .meta{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0 14px;font-size:12.5px;color:var(--text-dim)}
+  .meta b{color:var(--text)}
+  .aliases{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .alias{
+    font-size:12px;padding:3px 10px;border-radius:20px;
+    background:var(--bg2);border:1px solid var(--border-soft);color:var(--text-dim);
+  }
+  .grain{
+    margin-top:12px;padding:10px 14px;background:var(--bg2);
+    border-left:3px solid var(--accent);border-radius:8px;font-size:13px;color:var(--text-dim);
+  }
+
+  /* column table */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{
+    text-align:left;color:var(--text-faint);font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);
+  }
+  td{padding:11px 10px;border-bottom:1px solid var(--border-soft);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .col-name{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:600;font-size:12.5px;color:#fff}
+  .col-type{font-family:ui-monospace,monospace;font-size:11px;color:var(--text-faint)}
+  .col-desc{color:var(--text-dim);font-size:12.5px;line-height:1.5}
+  .col-aliases{font-size:11.5px;color:var(--text-faint);margin-top:4px}
+  .col-aliases span{color:var(--text-dim)}
+
+  .badge{
+    display:inline-block;font-size:10.5px;font-weight:600;padding:2px 9px;
+    border-radius:20px;white-space:nowrap;letter-spacing:.2px;
+  }
+  .b-primary_key{background:rgba(107,114,128,.18);color:#9ca3af}
+  .b-foreign_key{background:rgba(167,139,250,.18);color:#c4b5fd}
+  .b-dimension{background:rgba(96,165,250,.18);color:#93c5fd}
+  .b-measure{background:rgba(52,211,153,.18);color:#6ee7b7}
+  .b-event_time{background:rgba(251,191,36,.18);color:#fcd34d}
+  .b-attribute{background:rgba(34,211,238,.18);color:#67e8f9}
+  .b-status{background:rgba(244,114,182,.18);color:#f9a8d4}
+
+  .role-label{font-size:11px;color:var(--text-faint)}
+  .semantic-extra{
+    font-size:11px;margin-top:5px;color:#ffd166;
+  }
+  .semantic-extra .unit{
+    font-family:ui-monospace,monospace;color:#ffd166;background:rgba(255,209,102,.1);
+    padding:1px 7px;border-radius:10px;margin-right:6px;
+  }
+  .enum-chip{
+    display:inline-block;font-size:10.5px;padding:1px 7px;margin:2px 3px 0 0;
+    background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.25);
+    border-radius:12px;color:#ffd166;
+  }
+
+  /* metrics */
+  .metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .metric-card{
+    background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+    padding:16px;transition:all .15s;
+  }
+  .metric-card:hover{border-color:#33405c}
+  .metric-name{font-size:15px;font-weight:650}
+  .metric-code{font-family:ui-monospace,monospace;font-size:11px;color:var(--accent)}
+  .metric-formula{
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;
+    background:#0d1017;border:1px solid var(--border-soft);border-radius:8px;
+    padding:10px 12px;margin:10px 0;color:#7ee787;word-break:break-all;
+  }
+  .metric-desc{font-size:12.5px;color:var(--text-dim);margin-bottom:8px}
+  .metric-filter{
+    font-size:11.5px;color:#fcd34d;font-family:ui-monospace,monospace;
+    background:rgba(251,191,36,.08);padding:2px 8px;border-radius:8px;
+  }
+  .metric-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+
+  /* glossary */
+  .search-box{
+    width:100%;padding:11px 14px;background:var(--bg2);border:1px solid var(--border);
+    border-radius:10px;color:var(--text);font-size:14px;margin-bottom:14px;outline:none;
+  }
+  .search-box:focus{border-color:var(--accent)}
+  .glossary-table td:first-child{font-weight:600;color:#fff}
+  .arrow{color:var(--accent);font-family:monospace;padding:0 8px}
+  .field-ref{font-family:ui-monospace,monospace;font-size:12px;color:#93c5fd}
+
+  /* relations */
+  .rel-card{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    background:var(--bg2);border:1px solid var(--border);border-radius:11px;
+    padding:14px 16px;margin-bottom:10px;
+  }
+  .rel-end{font-family:ui-monospace,monospace;font-size:12.5px;color:#fff;font-weight:600}
+  .rel-join{
+    font-size:10.5px;color:#6ee7b7;background:rgba(52,211,153,.12);
+    padding:2px 9px;border-radius:16px;font-weight:600;
+  }
+  .rel-cardinality{font-size:11px;color:var(--text-faint)}
+  .rel-desc{font-size:12.5px;color:var(--text-dim);width:100%}
+
+  /* lineage svg panel */
+  .lineage-wrap{display:flex;justify-content:center;padding:10px 0}
+  .lineage-tip{text-align:center;font-size:12px;color:var(--text-faint);margin-top:6px}
+
+  footer{
+    max-width:1280px;margin:0 auto;padding:24px 28px 40px;
+    color:var(--text-faint);font-size:12px;text-align:center;
+  }
+  .empty{color:var(--text-faint);text-align:center;padding:40px 0}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="title-row">
+      <div class="logo">DC</div>
+      <div>
+        <h1>数据目录 · 语义层演示</h1>
+        <div class="subtitle">把物理表 / 字段，翻译成业务语义 —— 维度、指标、口径、单位、枚举值、术语</div>
+      </div>
+      <div class="source-badge"><span class="dot"></span> 本地电商演示数仓 · SQLite</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="num" id="stat-tables">3</span><span class="lbl">数据表</span></div>
+      <div class="stat"><span class="num" id="stat-cols">14</span><span class="lbl">字段</span></div>
+      <div class="stat"><span class="num" id="stat-metrics">4</span><span class="lbl">指标口径</span></div>
+      <div class="stat"><span class="num" id="stat-rels">2</span><span class="lbl">表关系</span></div>
+      <div class="stat"><span class="num" id="stat-terms">5</span><span class="lbl">术语映射</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="notice">
+  <span class="star">★</span>
+  <span>这是「语义层」视角的数据目录：它不只记录"表 / 字段在哪"，更记录"字段 <b>是什么意思</b>、怎么算"。
+  带 <span class="star">★</span> 的是相对你现在 catalog.json <b>新增</b> 的语义增强（指标口径、单位、枚举值、表级角色、术语映射），其余（描述、别名、语义角色）你已经有了。</span>
+</div>
+
+<div class="layout">
+  <aside>
+    <div class="panel">
+      <h2>数据表</h2>
+      <div id="table-list"></div>
+    </div>
+    <div class="panel">
+      <h2>表关系（数据模型）</h2>
+      <div class="mini-lineage" id="mini-lineage"></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="tabs">
+      <div class="tab active" data-tab="tables">表目录</div>
+      <div class="tab" data-tab="metrics">指标口径 ★</div>
+      <div class="tab" data-tab="glossary">术语映射 ★</div>
+      <div class="tab" data-tab="relations">表关系</div>
+    </div>
+    <div id="content"></div>
+  </main>
+</div>
+
+<footer>语义层数据目录演示 · 数据取自 metadata/catalog.json 与 relations.json · 双击打开，无需服务</footer>
+
+<script>
+// ===================== 数据 =====================
+// 来自 metadata/catalog.json（+ 语义层新增字段标 isNew:true）
+const SOURCE = {
+  display_name:"本地电商演示数仓", type:"sqlite", synced_at:"2026-08-03"
+};
+
+const TABLES = [
+  {
+    name:"users", display_name:"用户维表", table_role:"dimension",
+    aliases:["用户表","会员表","客户信息表"],
+    description:"保存电商平台注册用户的基础属性，用于按区域、城市等用户维度分析业务数据。",
+    data_grain:"一行代表一个用户。",
+    primary_key:"user_id",
+    columns:[
+      {name:"user_id", type:"INTEGER", role:"primary_key", desc:"用户唯一标识。", aliases:["用户ID","客户ID","会员ID"]},
+      {name:"name", type:"TEXT", role:"attribute", desc:"用户姓名。", aliases:["用户名","客户姓名"]},
+      {name:"region", type:"TEXT", role:"dimension", desc:"用户所属销售大区。", aliases:["大区","销售区域","区域"], enumValues:["华东","华北","华南","西南"], isNew:true},
+      {name:"city", type:"TEXT", role:"dimension", desc:"用户所在城市。", aliases:["城市","所在地"], enumValues:["上海","北京","深圳","杭州"], isNew:true}
+    ]
+  },
+  {
+    name:"products", display_name:"商品维表", table_role:"dimension",
+    aliases:["商品表","商品信息表","SKU表"],
+    description:"保存商品基础属性，用于按商品和品类维度分析订单数据。",
+    data_grain:"一行代表一个商品。",
+    primary_key:"product_id",
+    columns:[
+      {name:"product_id", type:"INTEGER", role:"primary_key", desc:"商品唯一标识。", aliases:["商品ID","SKU ID"]},
+      {name:"name", type:"TEXT", role:"attribute", desc:"商品名称。", aliases:["商品名","SKU名称"]},
+      {name:"category", type:"TEXT", role:"dimension", desc:"商品所属品类。", aliases:["品类","商品分类"], enumValues:["数码","家电","服饰","食品"], isNew:true},
+      {name:"unit_price", type:"REAL", role:"measure", desc:"商品目录标价，不用于订单成交金额统计。", aliases:["标价","商品价格","原价"], unit:"元/件", isNew:true}
+    ]
+  },
+  {
+    name:"orders", display_name:"订单明细表", table_role:"fact",
+    aliases:["订单表","交易表","销售订单"],
+    description:"保存电商订单记录，用于统计订单量、实付金额、商品销量及用户购买行为。",
+    data_grain:"演示数据中一行代表一笔订单记录，并关联一个用户和一个商品。",
+    primary_key:"order_id",
+    columns:[
+      {name:"order_id", type:"INTEGER", role:"primary_key", desc:"订单唯一标识。", aliases:["订单ID","订单号"]},
+      {name:"order_date", type:"TEXT", role:"event_time", desc:"用户下单日期，格式 YYYY-MM-DD。", aliases:["下单日期","订单日期","下单时间"]},
+      {name:"user_id", type:"INTEGER", role:"foreign_key", desc:"下单用户标识，关联 users.user_id。", aliases:["用户ID","客户ID"]},
+      {name:"product_id", type:"INTEGER", role:"foreign_key", desc:"购买商品标识，关联 products.product_id。", aliases:["商品ID","SKU ID"]},
+      {name:"quantity", type:"INTEGER", role:"measure", desc:"本订单购买的商品数量。", aliases:["购买数量","件数","销量"], unit:"件", isNew:true},
+      {name:"amount", type:"REAL", role:"measure", desc:"订单实付金额，不等同于商品标价。", aliases:["实付金额","支付金额","订单金额"], unit:"元", isNew:true},
+      {name:"status", type:"TEXT", role:"status", desc:"订单状态，可用于筛选已支付、取消或退款订单。", aliases:["订单状态","支付状态"], enumValues:["已支付","已取消","已退款"], isNew:true}
+    ]
+  }
+];
+
+// 指标口径（语义层核心：一次定义，处处复用）—— 新增
+const METRICS = [
+  {name:"销售额", code:"revenue", formula:"SUM(orders.amount)", table:"orders",
+   unit:"元", desc:"订单实付金额总和。", filter:"status = '已支付'", synonyms:["营收","成交额","GMV"]},
+  {name:"订单量", code:"order_count", formula:"COUNT(orders.order_id)", table:"orders",
+   unit:"笔", desc:"订单总数。", filter:null, synonyms:["下单数","订单数"]},
+  {name:"销量", code:"units_sold", formula:"SUM(orders.quantity)", table:"orders",
+   unit:"件", desc:"售出商品总件数。", filter:"status = '已支付'", synonyms:["售出件数"]},
+  {name:"客单价", code:"aov", formula:"SUM(amount) / COUNT(order_id)", table:"orders",
+   unit:"元", desc:"平均每笔订单实付金额。", filter:"status = '已支付'", synonyms:["ARPU","平均订单金额"]}
+];
+
+// 术语映射（业务词 → 字段）—— 新增（从 aliases 提炼为双向词典）
+const GLOSSARY = [
+  {term:"销售额", field:"orders.amount", type:"同义词", note:"也叫实付金额 / 支付金额"},
+  {term:"大区", field:"users.region", type:"同义词", note:"也叫销售区域 / 区域"},
+  {term:"品类", field:"products.category", type:"同义词", note:"也叫商品分类"},
+  {term:"下单日期", field:"orders.order_date", type:"同义词", note:"也叫订单日期 / 下单时间"},
+  {term:"订单状态", field:"orders.status", type:"同义词", note:"也叫支付状态"}
+];
+
+// 表关系（来自 relations.json）
+const RELATIONS = [
+  {id:"orders_user", from:"orders.user_id", to:"users.user_id", join:"LEFT JOIN",
+   cardinality:"多对一", verified:true, desc:"订单归属用户，可获取用户的区域和城市属性。"},
+  {id:"orders_product", from:"orders.product_id", to:"products.product_id", join:"LEFT JOIN",
+   cardinality:"多对一", verified:true, desc:"订单关联商品，可获取商品名称、品类和标价属性。"}
+];
+
+// ===================== 工具 =====================
+const ROLE_LABEL = {
+  primary_key:"主键", foreign_key:"外键", dimension:"维度", measure:"指标",
+  event_time:"时间", attribute:"属性", status:"状态"
+};
+const TABLE_ROLE_LABEL = {dimension:"维度表", fact:"事实表"};
+
+function tableByName(n){return TABLES.find(t=>t.name===n)}
+
+// ===================== 渲染 =====================
+function renderTableList(){
+  const el = document.getElementById("table-list");
+  el.innerHTML = TABLES.map(t=>`
+    <div class="table-item ${t.name==='orders'?'active':''}" data-table="${t.name}" onclick="selectTable('${t.name}')">
+      <div class="t-name">${t.display_name}</div>
+      <div class="t-phys">${t.name} · ${t.columns.length} 字段</div>
+      <div class="t-desc">${t.description.slice(0,26)}…</div>
+      <span class="role-tag ${t.table_role==='fact'?'b-measure':'b-dimension'}">${TABLE_ROLE_LABEL[t.table_role]} ★</span>
+    </div>`).join("");
+}
+
+function renderMiniLineage(){
+  const el = document.getElementById("mini-lineage");
+  el.innerHTML = `
+    <div class="mini-node">users · 用户维表</div>
+    <div class="mini-edge">orders.user_id → users.user_id</div>
+    <div class="mini-node">products · 商品维表</div>
+    <div class="mini-edge">orders.product_id → products.product_id</div>
+    <div class="mini-node fact">orders · 订单事实表</div>`;
+}
+
+function selectTable(name){
+  document.querySelectorAll(".table-item").forEach(i=>i.classList.toggle("active", i.dataset.table===name));
+  renderTableDetail(name);
+  // 切到表目录 tab
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab==="tables"));
+}
+
+function renderTableDetail(name){
+  const t = tableByName(name);
+  const c = document.getElementById("content");
+  const cols = t.columns.map(col=>`
+    <tr>
+      <td>
+        <div class="col-name">${col.name}</div>
+        <div class="col-type">${col.type}</div>
+      </td>
+      <td><span class="badge b-${col.role}">${ROLE_LABEL[col.role]}</span>
+          ${col.isNew?'<div class="role-label" style="margin-top:4px">★ 语义增强</div>':''}</td>
+      <td>
+        <div class="col-desc">${col.desc}</div>
+        ${col.aliases?`<div class="col-aliases">别名：${col.aliases.map(a=>`<span>${a}</span>`).join(" / ")}</div>`:''}
+        ${col.unit?`<div class="semantic-extra"><span class="unit">单位 ${col.unit}</span> ★</div>`:''}
+        ${col.enumValues?`<div class="semantic-extra">枚举值 ★：${col.enumValues.map(v=>`<span class="enum-chip">${v}</span>`).join("")}</div>`:''}
+      </td>
+    </tr>`).join("");
+
+  c.innerHTML = `
+    <div class="card">
+      <h3>${t.display_name} <span style="font-family:monospace;font-size:12px;color:var(--text-faint)">${t.name}</span></h3>
+      <div class="meta">
+        <span>角色：<b>${TABLE_ROLE_LABEL[t.table_role]} ★</b></span>
+        <span>主键：<b style="font-family:monospace">${t.primary_key}</b></span>
+        <span>字段数：<b>${t.columns.length}</b></span>
+      </div>
+      <div class="col-desc" style="font-size:13.5px">${t.description}</div>
+      <div class="aliases">${t.aliases.map(a=>`<span class="alias">${a}</span>`).join("")}</div>
+      <div class="grain">📌 数据粒度（一行代表什么）：${t.data_grain}</div>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:14px">字段明细</h3>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th style="width:120px">字段</th><th style="width:110px">语义角色</th><th>含义</th></tr></thead>
+        <tbody>${cols}</tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
+function renderMetrics(){
+  const c = document.getElementById("content");
+  c.innerHTML = `
+    <div class="card" style="background:var(--accent-soft);border-color:rgba(77,159,255,.3)">
+      <h3 style="color:#cfe4ff">指标口径 —— 语义层的核心 ★</h3>
+      <div style="font-size:13px;color:#cfe4ff;margin-top:4px">
+        指标 = <b>聚合方式 + 字段 + 过滤条件</b>，一次定义、处处复用。<br>
+        这样 "销售额" 在任何问题里都指向同一个算法，agent 取数不会各算各的，也不会把"标价"错当成"实付金额"。
+      </div>
+    </div>
+    <div class="metric-grid">
+      ${METRICS.map(m=>`
+        <div class="metric-card">
+          <div class="metric-name">${m.name} <span class="metric-code">${m.code}</span></div>
+          <div class="metric-formula">${m.formula}</div>
+          <div class="metric-desc">${m.desc}</div>
+          <div class="metric-meta">
+            <span class="badge b-dimension">单位 ${m.unit}</span>
+            ${m.filter?`<span class="metric-filter">过滤：${m.filter}</span>`:''}
+          </div>
+          <div class="metric-meta" style="margin-top:8px">
+            ${m.synonyms.map(s=>`<span class="alias">${s}</span>`).join("")}
+          </div>
+        </div>`).join("")}
+    </div>`;
+}
+
+function renderGlossary(filter){
+  const c = document.getElementById("content");
+  const q = (filter||"").toLowerCase();
+  const rows = GLOSSARY.filter(g=>!q || g.term.includes(q) || g.field.includes(q) || g.note.includes(q));
+  c.innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:14px">术语映射 —— 业务词 ↔ 字段 双向词典 ★</h3>
+      <div style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
+        这是让 NL2SQL 变准的关键一环：用户说"大区"，agent 需要知道它指 <span class="field-ref">users.region</span>；说"销售额"，指 <span class="field-ref">orders.amount</span>。
+      </div>
+      <input class="search-box" id="glossary-search" placeholder="搜索术语或字段…（如：销售额 / region）" value="${filter||''}" oninput="renderGlossary(this.value)">
+      ${rows.length===0?`<div class="empty">没有匹配的术语</div>`:`
+      <table class="glossary-table">
+        <thead><tr><th>业务术语</th><th></th><th>对应字段</th><th>说明</th></tr></thead>
+        <tbody>
+        ${rows.map(g=>`
+          <tr>
+            <td>${g.term}</td>
+            <td><span class="arrow">→</span></td>
+            <td><span class="field-ref">${g.field}</span></td>
+            <td style="color:var(--text-dim)">${g.note}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>`;
+}
+
+function renderRelations(){
+  const c = document.getElementById("content");
+  c.innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:14px">表关系（数据模型）</h3>
+      <div class="lineage-wrap">
+        <svg width="620" height="330" viewBox="0 0 620 330">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <path d="M0,0 L10,4 L0,8 z" fill="#4d9fff"/>
+            </marker>
+          </defs>
+          <!-- edges -->
+          <path d="M 130 145 C 160 210, 220 210, 300 205" stroke="#4d9fff" stroke-width="1.6" fill="none" marker-end="url(#arrow)" stroke-dasharray="5 3"/>
+          <path d="M 490 145 C 460 210, 400 210, 320 205" stroke="#4d9fff" stroke-width="1.6" fill="none" marker-end="url(#arrow)" stroke-dasharray="5 3"/>
+          <text x="175" y="195" fill="#9aa3b4" font-size="11" font-family="monospace">user_id</text>
+          <text x="405" y="195" fill="#9aa3b4" font-size="11" font-family="monospace">product_id</text>
+          <!-- users node -->
+          <rect x="20" y="20" width="220" height="125" rx="12" fill="#181d28" stroke="#60a5fa" stroke-width="1.5"/>
+          <text x="38" y="48" fill="#93c5fd" font-size="14" font-weight="600">users · 用户维表</text>
+          <text x="38" y="70" fill="#6b7486" font-size="11" font-family="monospace">维度表</text>
+          <text x="38" y="92" fill="#9aa3b4" font-size="11" font-family="monospace">user_id (PK)</text>
+          <text x="38" y="110" fill="#9aa3b4" font-size="11" font-family="monospace">region · city</text>
+          <text x="38" y="130" fill="#6b7486" font-size="10">大区、城市…</text>
+          <!-- products node -->
+          <rect x="380" y="20" width="220" height="125" rx="12" fill="#181d28" stroke="#60a5fa" stroke-width="1.5"/>
+          <text x="398" y="48" fill="#93c5fd" font-size="14" font-weight="600">products · 商品维表</text>
+          <text x="398" y="70" fill="#6b7486" font-size="11" font-family="monospace">维度表</text>
+          <text x="398" y="92" fill="#9aa3b4" font-size="11" font-family="monospace">product_id (PK)</text>
+          <text x="398" y="110" fill="#9aa3b4" font-size="11" font-family="monospace">category · unit_price</text>
+          <text x="398" y="130" fill="#6b7486" font-size="10">品类、标价…</text>
+          <!-- orders node -->
+          <rect x="200" y="205" width="220" height="110" rx="12" fill="#181d28" stroke="#34d399" stroke-width="1.5"/>
+          <text x="218" y="233" fill="#6ee7b7" font-size="14" font-weight="600">orders · 订单事实表</text>
+          <text x="218" y="255" fill="#6b7486" font-size="11" font-family="monospace">事实表</text>
+          <text x="218" y="277" fill="#9aa3b4" font-size="11" font-family="monospace">order_id (PK)</text>
+          <text x="218" y="295" fill="#9aa3b4" font-size="11" font-family="monospace">amount · quantity…</text>
+        </svg>
+      </div>
+      <div class="lineage-tip">事实表 orders 通过外键关联两张维度表，构成星型模型</div>
+    </div>
+    ${RELATIONS.map(r=>`
+      <div class="rel-card">
+        <span class="rel-end">${r.from}</span>
+        <span class="arrow">→</span>
+        <span class="rel-join">${r.join}</span>
+        <span class="arrow">→</span>
+        <span class="rel-end">${r.to}</span>
+        <span class="rel-cardinality">(${r.cardinality}${r.verified?' · 已验证':''})</span>
+        <div class="rel-desc">${r.desc}</div>
+      </div>`).join("")}`;
+}
+
+function switchTab(tab){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===tab));
+  if(tab==="tables"){renderTableDetail(document.querySelector(".table-item.active")?.dataset.table || "orders");}
+  else if(tab==="metrics"){renderMetrics();}
+  else if(tab==="glossary"){renderGlossary();}
+  else if(tab==="relations"){renderRelations();}
+}
+
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click", ()=>switchTab(t.dataset.tab)));
+
+// init
+renderTableList();
+renderMiniLineage();
+renderTableDetail("orders");
+</script>
+</body>
+</html>

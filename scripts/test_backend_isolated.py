@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 def main():
     import backend.core as core
     import pytest
+    from cryptography.fernet import Fernet
 
     # Override paths before importing app/test modules (some legacy tests use db()).
     with tempfile.TemporaryDirectory(prefix="backend-tests-", dir=core.DATA_DIR) as directory:
@@ -22,6 +23,8 @@ def main():
         os.environ["EMBEDDING_BACKEND"] = "hash"
         os.environ["RERANK_BACKEND"] = "none"
         os.environ["VECTOR_STORE_BACKEND"] = "sqlite"
+        os.environ["APP_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+        os.environ.pop("DEEPSEEK_API_KEY", None)
         from backend.evaluation.fixtures import create_warehouse
         from backend.main import init_storage
         create_warehouse(core.DEMO_DB)

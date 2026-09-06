@@ -1,0 +1,46 @@
+services:
+  embedding:
+    image: yuxi-api:0.7.1
+    container_name: data-agent-embedding
+    restart: unless-stopped
+    entrypoint: ["python", "/service/model_service.py"]
+    command: ["--task", "embedding", "--model-path", "/models/bge-small-zh-v1.5", "--port", "80"]
+    ports:
+      - 127.0.0.1:8081:80
+    volumes:
+      - /home/ubuntu/data-agent-rag/model_service.py:/service/model_service.py:ro
+      - /home/ubuntu/data-agent-rag/models/bge-small-zh-v1.5:/models/bge-small-zh-v1.5:ro
+    environment:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 900M
+
+  reranker:
+    image: yuxi-api:0.7.1
+    container_name: data-agent-reranker
+    restart: unless-stopped
+    entrypoint: ["python", "/service/model_service.py"]
+    command: ["--task", "reranker", "--model-path", "/models/bge-reranker-base", "--port", "80"]
+    ports:
+      - 127.0.0.1:8082:80
+    volumes:
+      - /home/ubuntu/data-agent-rag/model_service.py:/service/model_service.py:ro
+      - /home/ubuntu/data-agent-rag/models/bge-reranker-base:/models/bge-reranker-base:ro
+    environment:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1400M

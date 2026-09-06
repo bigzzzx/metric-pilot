@@ -19,7 +19,7 @@ def test_both_entry_points_execute_same_nodes_and_business_outcome(monkeypatch, 
                 "memory_query": "preference", "mcp_tool_call": {"tool_id": "x"} if scenario == "mcp" else None}
     async def rag(state):
         calls.append("rag")
-        return {**state, "rag": []}
+        return {**state, "rag": [{"asset_ids": ["orders"], "kind": "table", "title": "orders", "content": "orders(amount)"}]}
     async def memory(state):
         calls.append("memory")
         return state
@@ -40,6 +40,9 @@ def test_both_entry_points_execute_same_nodes_and_business_outcome(monkeypatch, 
         yield "回"
         yield "答"
     def invoke(tool_id, payload, context):
+        if tool_id == "catalog_schema":
+            return ToolResult(status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
+                              data={"tables": [{"asset_id": "orders", "name": "orders", "columns": []}]})
         calls.append("query")
         attempts.append(1)
         if scenario == "failed" or (scenario == "repair" and len(attempts) == 1):

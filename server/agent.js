@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const catalog = JSON.parse(fs.readFileSync(path.resolve('metadata/catalog.json'), 'utf8'));
+const catalogDocument = JSON.parse(fs.readFileSync(path.resolve('metadata/catalog.json'), 'utf8'));
+// catalog.json now carries source/version metadata around the table list. Keep
+// this legacy Node fallback compatible with both the old array shape and the
+// current structured document.
+const catalog = Array.isArray(catalogDocument) ? catalogDocument : (catalogDocument.tables ?? []);
 const forbidden = /\b(drop|delete|insert|update|alter|create|truncate|attach|pragma)\b|;/i;
 const allowedTables = new Set(catalog.map((table) => table.name));
 const intents = new Set(['CHAT', 'METADATA_QA', 'DATA_QUERY', 'ETL_TRIGGER', 'UNSAFE_REQUEST']);

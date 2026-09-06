@@ -1,5 +1,999 @@
-[
-  {"name":"users","description":"电商用户主数据，含用户注册日期、城市和地区。","primaryKey":"user_id","columns":[["user_id","用户唯一标识"],["name","用户姓名"],["region","销售大区，如华东"],["city","所在城市"],["registered_at","注册日期"]]},
-  {"name":"products","description":"商品主数据，含商品品类和标价。","primaryKey":"product_id","columns":[["product_id","商品唯一标识"],["name","商品名称"],["category","商品品类"],["unit_price","商品标价"]]},
-  {"name":"orders","description":"订单明细事实表，每行对应一笔商品订单。","primaryKey":"order_id","columns":[["order_id","订单唯一标识"],["order_date","下单日期"],["user_id","关联 users 的用户标识"],["product_id","关联 products 的商品标识"],["quantity","购买数量"],["amount","订单实付金额"],["status","订单状态"]],"relations":["orders.user_id -> users.user_id","orders.product_id -> products.product_id"]}
-]
+{
+  "version": "2.0",
+  "source": {
+    "id": "local-ecommerce-demo",
+    "display_name": "本地全域经营演示数仓",
+    "type": "sqlite",
+    "synced_at": "2026-08-26"
+  },
+  "domains": [
+    {
+      "id": "domain-ecommerce",
+      "name": "ecommerce",
+      "display_name": "电商经营域",
+      "description": "用户、商品、订单、支付与经营看板资产。"
+    },
+    {
+      "id": "domain-marketing",
+      "name": "marketing",
+      "display_name": "营销增长域",
+      "description": "投放事件、归因、转化与 ROI 资产。"
+    }
+  ],
+  "tables": [
+    {
+      "name": "ods_user_snapshot",
+      "display_name": "用户快照原始表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "ODS",
+      "normalized_stage": "raw",
+      "description": "每日从用户系统采集的原始快照，保留源系统字段。",
+      "data_grain": "一行代表一个用户在一个快照日期的记录。",
+      "primary_key": "snapshot_id",
+      "columns": [
+        {
+          "name": "snapshot_id",
+          "type": "INTEGER",
+          "description": "原始快照唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "snapshot_date",
+          "type": "TEXT",
+          "description": "采集快照日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "源用户标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "user_name",
+          "type": "TEXT",
+          "description": "源系统用户姓名。",
+          "semantic_role": "attribute",
+          "aliases": []
+        },
+        {
+          "name": "region",
+          "type": "TEXT",
+          "description": "源系统大区。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "city",
+          "type": "TEXT",
+          "description": "源系统城市。",
+          "semantic_role": "dimension",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "原始用户",
+        "用户 ODS"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "ods_product_snapshot",
+      "display_name": "商品快照原始表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "ODS",
+      "normalized_stage": "raw",
+      "description": "每日从商品系统采集的原始商品快照。",
+      "data_grain": "一行代表一个商品在一个快照日期的记录。",
+      "primary_key": "snapshot_id",
+      "columns": [
+        {
+          "name": "snapshot_id",
+          "type": "INTEGER",
+          "description": "原始快照唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "snapshot_date",
+          "type": "TEXT",
+          "description": "采集快照日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "product_id",
+          "type": "INTEGER",
+          "description": "源商品标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "product_name",
+          "type": "TEXT",
+          "description": "源商品名称。",
+          "semantic_role": "attribute",
+          "aliases": []
+        },
+        {
+          "name": "category",
+          "type": "TEXT",
+          "description": "源商品品类。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "list_price",
+          "type": "REAL",
+          "description": "源系统目录标价。",
+          "semantic_role": "measure",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "原始商品",
+        "商品 ODS"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "ods_order_events",
+      "display_name": "订单事件原始表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "ODS",
+      "normalized_stage": "raw",
+      "description": "订单系统产生的下单、支付、取消等事件流。",
+      "data_grain": "一行代表一笔订单的一次状态事件。",
+      "primary_key": "event_id",
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "INTEGER",
+          "description": "订单事件唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "event_time",
+          "type": "TEXT",
+          "description": "事件发生时间。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "order_id",
+          "type": "INTEGER",
+          "description": "源订单标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "下单用户标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "product_id",
+          "type": "INTEGER",
+          "description": "商品标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "event_type",
+          "type": "TEXT",
+          "description": "事件类型，如 created、paid。",
+          "semantic_role": "status",
+          "aliases": []
+        },
+        {
+          "name": "event_amount",
+          "type": "REAL",
+          "description": "事件对应金额。",
+          "semantic_role": "measure",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "订单 ODS",
+        "交易事件"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "users",
+      "display_name": "用户维表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DIM",
+      "normalized_stage": "refined",
+      "description": "已清洗的平台注册用户维度，用于按区域、城市分析业务。",
+      "data_grain": "一行代表一个用户。",
+      "primary_key": "user_id",
+      "columns": [
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "用户唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": [
+            "用户ID",
+            "客户ID"
+          ]
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "description": "用户姓名，样例展示会脱敏。",
+          "semantic_role": "attribute",
+          "aliases": [
+            "用户名",
+            "客户姓名"
+          ]
+        },
+        {
+          "name": "region",
+          "type": "TEXT",
+          "description": "用户所属销售大区。",
+          "semantic_role": "dimension",
+          "aliases": [
+            "大区",
+            "销售区域"
+          ]
+        },
+        {
+          "name": "city",
+          "type": "TEXT",
+          "description": "用户所在城市。",
+          "semantic_role": "dimension",
+          "aliases": [
+            "城市",
+            "所在地"
+          ]
+        },
+        {
+          "name": "register_date",
+          "type": "TEXT",
+          "description": "用户注册日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "用户表",
+        "会员表",
+        "客户信息表"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "products",
+      "display_name": "商品维表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DIM",
+      "normalized_stage": "refined",
+      "description": "已清洗的商品维度，用于按商品、品类分析交易。",
+      "data_grain": "一行代表一个商品。",
+      "primary_key": "product_id",
+      "columns": [
+        {
+          "name": "product_id",
+          "type": "INTEGER",
+          "description": "商品唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": [
+            "商品ID",
+            "SKU ID"
+          ]
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "description": "商品名称。",
+          "semantic_role": "attribute",
+          "aliases": [
+            "商品名",
+            "SKU名称"
+          ]
+        },
+        {
+          "name": "category",
+          "type": "TEXT",
+          "description": "商品所属品类。",
+          "semantic_role": "dimension",
+          "aliases": [
+            "品类",
+            "商品分类"
+          ]
+        },
+        {
+          "name": "unit_price",
+          "type": "REAL",
+          "description": "商品目录标价，不等同于订单实付金额。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "brand",
+          "type": "TEXT",
+          "description": "商品品牌。",
+          "semantic_role": "dimension",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "商品表",
+        "商品信息表",
+        "SKU表"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "dim_calendar",
+      "display_name": "日期维表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DIM",
+      "normalized_stage": "refined",
+      "description": "标准日期维度，为日、周、月经营分析提供统一时间口径。",
+      "data_grain": "一行代表一个自然日期。",
+      "primary_key": "date_key",
+      "columns": [
+        {
+          "name": "date_key",
+          "type": "TEXT",
+          "description": "日期键，YYYY-MM-DD。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "month_key",
+          "type": "TEXT",
+          "description": "自然月键，YYYY-MM。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "week_of_year",
+          "type": "INTEGER",
+          "description": "一年中的第几周。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "is_weekend",
+          "type": "INTEGER",
+          "description": "是否周末，1 表示是。",
+          "semantic_role": "dimension",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "日历维",
+        "日期表"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "orders",
+      "display_name": "订单明细表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DWD",
+      "normalized_stage": "refined",
+      "description": "已清洗的订单明细，用于订单量、实付金额、销量及用户购买行为分析。",
+      "data_grain": "一行代表一笔订单记录。",
+      "primary_key": "order_id",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "INTEGER",
+          "description": "订单唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": [
+            "订单ID",
+            "订单号"
+          ]
+        },
+        {
+          "name": "order_date",
+          "type": "TEXT",
+          "description": "用户下单日期。",
+          "semantic_role": "event_time",
+          "aliases": [
+            "下单日期",
+            "订单日期"
+          ]
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "下单用户标识。",
+          "semantic_role": "foreign_key",
+          "aliases": [
+            "用户ID"
+          ]
+        },
+        {
+          "name": "product_id",
+          "type": "INTEGER",
+          "description": "购买商品标识。",
+          "semantic_role": "foreign_key",
+          "aliases": [
+            "商品ID"
+          ]
+        },
+        {
+          "name": "quantity",
+          "type": "INTEGER",
+          "description": "本订单购买的商品数量。",
+          "semantic_role": "measure",
+          "aliases": [
+            "购买数量",
+            "销量"
+          ]
+        },
+        {
+          "name": "amount",
+          "type": "REAL",
+          "description": "订单实付金额。",
+          "semantic_role": "measure",
+          "aliases": [
+            "实付金额",
+            "支付金额"
+          ]
+        },
+        {
+          "name": "status",
+          "type": "TEXT",
+          "description": "订单状态：PAID、CANCELLED、REFUNDED。",
+          "semantic_role": "status",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "订单表",
+        "交易表",
+        "销售订单"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "dwd_payment_detail",
+      "display_name": "支付明细表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DWD",
+      "normalized_stage": "refined",
+      "description": "支付渠道返回的清洗支付明细，用于支付成功率和渠道分析。",
+      "data_grain": "一行代表一次支付尝试。",
+      "primary_key": "payment_id",
+      "columns": [
+        {
+          "name": "payment_id",
+          "type": "INTEGER",
+          "description": "支付明细唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "order_id",
+          "type": "INTEGER",
+          "description": "关联订单标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "pay_date",
+          "type": "TEXT",
+          "description": "支付日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "payment_channel",
+          "type": "TEXT",
+          "description": "支付渠道，如支付宝、微信。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "paid_amount",
+          "type": "REAL",
+          "description": "实际支付金额。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "payment_status",
+          "type": "TEXT",
+          "description": "支付状态。",
+          "semantic_role": "status",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "支付表",
+        "收款明细"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "dws_daily_sales",
+      "display_name": "日销售汇总表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DWS",
+      "normalized_stage": "aggregate",
+      "description": "按日期、区域和品类汇总的可信经营指标。",
+      "data_grain": "一行代表一个日期、区域、品类组合。",
+      "primary_key": "sales_key",
+      "columns": [
+        {
+          "name": "sales_key",
+          "type": "TEXT",
+          "description": "汇总记录唯一键。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "sales_date",
+          "type": "TEXT",
+          "description": "统计日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "region",
+          "type": "TEXT",
+          "description": "销售大区。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "category",
+          "type": "TEXT",
+          "description": "商品品类。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "paid_order_count",
+          "type": "INTEGER",
+          "description": "已支付订单数。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "gmv",
+          "type": "REAL",
+          "description": "已支付订单实付金额之和。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "units_sold",
+          "type": "INTEGER",
+          "description": "已支付订单商品件数之和。",
+          "semantic_role": "measure",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "日销汇总",
+        "销售宽表"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "dws_user_purchase_30d",
+      "display_name": "用户近30日购买汇总表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "DWS",
+      "normalized_stage": "aggregate",
+      "description": "按用户滚动聚合的近 30 日购买行为，用于复购和用户价值分析。",
+      "data_grain": "一行代表一个用户在统计日期的滚动窗口汇总。",
+      "primary_key": "user_purchase_key",
+      "columns": [
+        {
+          "name": "user_purchase_key",
+          "type": "TEXT",
+          "description": "用户窗口汇总唯一键。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "stat_date",
+          "type": "TEXT",
+          "description": "统计截止日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "用户标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "paid_order_count_30d",
+          "type": "INTEGER",
+          "description": "近30日已支付订单数。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "gmv_30d",
+          "type": "REAL",
+          "description": "近30日 GMV。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "last_paid_date",
+          "type": "TEXT",
+          "description": "最近一次支付日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "用户购买汇总",
+        "用户价值宽表"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "ads_sales_dashboard",
+      "display_name": "销售经营看板表",
+      "domain_id": "domain-ecommerce",
+      "warehouse_layer": "ADS",
+      "normalized_stage": "application",
+      "description": "服务销售经营看板的日级应用数据集，默认推荐给分析问答。",
+      "data_grain": "一行代表一个统计日期和区域。",
+      "primary_key": "dashboard_key",
+      "columns": [
+        {
+          "name": "dashboard_key",
+          "type": "TEXT",
+          "description": "看板记录唯一键。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "stat_date",
+          "type": "TEXT",
+          "description": "统计日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "region",
+          "type": "TEXT",
+          "description": "销售大区。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "gmv",
+          "type": "REAL",
+          "description": "已支付 GMV。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "paid_order_count",
+          "type": "INTEGER",
+          "description": "已支付订单量。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "aov",
+          "type": "REAL",
+          "description": "客单价，GMV/订单量。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "active_buyer_count",
+          "type": "INTEGER",
+          "description": "当日支付用户数。",
+          "semantic_role": "measure",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "销售看板",
+        "经营大盘"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "ods_campaign_events",
+      "display_name": "营销活动事件原始表",
+      "domain_id": "domain-marketing",
+      "warehouse_layer": "ODS",
+      "normalized_stage": "raw",
+      "description": "广告平台采集的曝光、点击、转化原始事件。",
+      "data_grain": "一行代表一次营销触点事件。",
+      "primary_key": "event_id",
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "INTEGER",
+          "description": "活动事件唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "event_date",
+          "type": "TEXT",
+          "description": "事件日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "campaign_id",
+          "type": "TEXT",
+          "description": "活动标识。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "channel",
+          "type": "TEXT",
+          "description": "投放渠道。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "event_type",
+          "type": "TEXT",
+          "description": "曝光、点击或转化事件。",
+          "semantic_role": "status",
+          "aliases": []
+        },
+        {
+          "name": "cost",
+          "type": "REAL",
+          "description": "该触点归属成本。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "可归因用户标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "营销 ODS",
+        "投放事件"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "dwd_campaign_attribution",
+      "display_name": "营销归因明细表",
+      "domain_id": "domain-marketing",
+      "warehouse_layer": "DWD",
+      "normalized_stage": "refined",
+      "description": "将广告触点与订单转化归因后的明细。",
+      "data_grain": "一行代表一笔归因转化。",
+      "primary_key": "attribution_id",
+      "columns": [
+        {
+          "name": "attribution_id",
+          "type": "INTEGER",
+          "description": "归因记录唯一标识。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "event_date",
+          "type": "TEXT",
+          "description": "归因日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "campaign_id",
+          "type": "TEXT",
+          "description": "活动标识。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "description": "转化用户标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "order_id",
+          "type": "INTEGER",
+          "description": "归因订单标识。",
+          "semantic_role": "foreign_key",
+          "aliases": []
+        },
+        {
+          "name": "attributed_gmv",
+          "type": "REAL",
+          "description": "归因后的成交金额。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "attribution_model",
+          "type": "TEXT",
+          "description": "归因模型，如 last_click。",
+          "semantic_role": "dimension",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "活动归因",
+        "投放转化"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "dws_campaign_daily",
+      "display_name": "活动日汇总表",
+      "domain_id": "domain-marketing",
+      "warehouse_layer": "DWS",
+      "normalized_stage": "aggregate",
+      "description": "按日期、活动、渠道汇总投放成本和转化结果。",
+      "data_grain": "一行代表一个日期、活动、渠道组合。",
+      "primary_key": "campaign_daily_key",
+      "columns": [
+        {
+          "name": "campaign_daily_key",
+          "type": "TEXT",
+          "description": "活动日汇总唯一键。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "stat_date",
+          "type": "TEXT",
+          "description": "统计日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "campaign_id",
+          "type": "TEXT",
+          "description": "活动标识。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "channel",
+          "type": "TEXT",
+          "description": "投放渠道。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "impressions",
+          "type": "INTEGER",
+          "description": "曝光次数。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "clicks",
+          "type": "INTEGER",
+          "description": "点击次数。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "conversions",
+          "type": "INTEGER",
+          "description": "转化订单数。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "cost",
+          "type": "REAL",
+          "description": "投放成本。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "attributed_gmv",
+          "type": "REAL",
+          "description": "归因 GMV。",
+          "semantic_role": "measure",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "活动效果汇总",
+        "投放日报"
+      ],
+      "sensitivity": "internal"
+    },
+    {
+      "name": "ads_campaign_roi",
+      "display_name": "营销 ROI 看板表",
+      "domain_id": "domain-marketing",
+      "warehouse_layer": "ADS",
+      "normalized_stage": "application",
+      "description": "服务营销投放效率看板的应用数据集。",
+      "data_grain": "一行代表一个统计日期、活动、渠道组合。",
+      "primary_key": "roi_key",
+      "columns": [
+        {
+          "name": "roi_key",
+          "type": "TEXT",
+          "description": "ROI 看板记录唯一键。",
+          "semantic_role": "primary_key",
+          "aliases": []
+        },
+        {
+          "name": "stat_date",
+          "type": "TEXT",
+          "description": "统计日期。",
+          "semantic_role": "event_time",
+          "aliases": []
+        },
+        {
+          "name": "campaign_id",
+          "type": "TEXT",
+          "description": "活动标识。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "channel",
+          "type": "TEXT",
+          "description": "投放渠道。",
+          "semantic_role": "dimension",
+          "aliases": []
+        },
+        {
+          "name": "cost",
+          "type": "REAL",
+          "description": "投放成本。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "attributed_gmv",
+          "type": "REAL",
+          "description": "归因 GMV。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "roi",
+          "type": "REAL",
+          "description": "ROI，归因 GMV/成本。",
+          "semantic_role": "measure",
+          "aliases": []
+        },
+        {
+          "name": "conversion_rate",
+          "type": "REAL",
+          "description": "转化率，转化数/点击数。",
+          "semantic_role": "measure",
+          "aliases": []
+        }
+      ],
+      "aliases": [
+        "ROI 看板",
+        "营销大盘"
+      ],
+      "sensitivity": "internal"
+    }
+  ]
+}

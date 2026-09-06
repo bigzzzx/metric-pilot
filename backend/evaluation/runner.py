@@ -26,6 +26,17 @@ def offline_case(case):
 
 
 async def live_case(case):
+    from backend.model_metrics import collected_metrics
+    metrics = []
+    token = collected_metrics.set(metrics)
+    try:
+        result = await _live_case(case)
+        return {**result, "model_calls": metrics}
+    finally:
+        collected_metrics.reset(token)
+
+
+async def _live_case(case):
     from backend.agent import run_agent_stream
     from backend.evaluation.environment import SQL_ATTEMPTS
     SQL_ATTEMPTS.clear()
@@ -78,7 +89,7 @@ async def evaluate(mode="offline", case_ids=None):
         print(json.dumps({"case": case.id, "status": result["status"]}), flush=True)
     completed = [item for item in results if item["status"] != "skipped"]
     durations = [item["duration_ms"] for item in completed if "duration_ms" in item]
-    return {"suite_version": "2026-09-06.2-explicit-order-date",
+    return {"suite_version": "2026-09-06.3-fixture-schema-consistency",
             "mode": mode, "retrieval": "permission-scoped fixture BM25 (no production vectors)",
             "model_accuracy_measured": mode == "live", "total": len(results),
             "passed": sum(item["status"] == "passed" for item in results),

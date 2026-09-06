@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "api": ".\\venv\\Scripts\\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 3001",
+    "api": ".\\.venv\\Scripts\\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 3001",
     "build": "vite build",
     "test": "node --test"
   },

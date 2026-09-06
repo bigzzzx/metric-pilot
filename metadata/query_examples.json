@@ -23,7 +23,7 @@
       },
       {
         "id": "catalog:asset:asset-users",
-        "version": "b97c3b8ef82e50abdb568bcc7b24ac4ffb512cef8f5c1871be05357051cef99f"
+        "version": "3dabe5efcde2d3f8f823703a1c869c4baeb7dcd8a15d520d802a03c2a9fc6f4d"
       },
       {
         "id": "catalog:relation:orders_user",
@@ -47,7 +47,7 @@
       },
       {
         "id": "catalog:asset:asset-dwd_payment_detail",
-        "version": "23eb7430112d943d7116af0d848de9702d679e2763620d2a9a8c295080fc6cdb"
+        "version": "dbdd0c75375d5eee543449194db82ece2379b91d9d8a58b1cf0875000fac58ab"
       },
       {
         "id": "catalog:relation:payment_order",

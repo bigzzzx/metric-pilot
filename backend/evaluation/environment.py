@@ -17,6 +17,7 @@ def evaluation_environment(directory):
     from backend.catalog import rag_documents, retrieval, service
     from backend.hybrid_retrieval import bm25_rank
     from backend.tools import sql_tool
+    from backend.query_quality import schema_lookup
     from backend.tools.models import ToolResult, ToolStatus
 
     platform, warehouse = directory / "platform.db", directory / "warehouse.db"
@@ -32,6 +33,14 @@ def evaluation_environment(directory):
     # The fixture catalog must describe only tables actually created above.
     con.execute("""UPDATE catalog_assets SET publish_status='draft'
                    WHERE physical_name NOT IN ('users','products','orders','dwd_payment_detail','ads_campaign_roi')""")
+    physical = factory(warehouse)
+    for asset in con.execute("SELECT id,physical_name FROM catalog_assets WHERE publish_status='published'").fetchall():
+        name = asset["physical_name"]
+        fields = {row["name"] for row in physical.execute('PRAGMA table_info("' + name.replace('"', '""') + '")')}
+        for column in con.execute("SELECT id,physical_name FROM catalog_columns WHERE asset_id=?", (asset["id"],)).fetchall():
+            if column["physical_name"] not in fields:
+                con.execute("DELETE FROM catalog_columns WHERE id=?", (column["id"],))
+    physical.close()
     con.execute("INSERT INTO users(id,username,password_hash,is_active) VALUES ('eval-analyst','eval-analyst','not-a-login',1)")
     con.execute("INSERT INTO catalog_group_memberships(group_id,user_id) VALUES ('group-ecommerce-analysts','eval-analyst')")
     con.execute("""INSERT INTO catalog_metrics(id,name,display_name,domain_id,description,definition_sql,formula,grain,publish_status,certification_status)
@@ -47,6 +56,8 @@ def evaluation_environment(directory):
                     docs = rag_documents.authorized_catalog_documents(context.user_id)
                     rows = bm25_rank(payload["query"], docs, payload.get("limit", 8))
                     data = {"chunks": rows}
+                elif tool_id == "catalog_schema":
+                    data = schema_lookup.lookup_schema(schema_lookup.SchemaLookupInput.model_validate(payload), context)
                 elif tool_id == "readonly_sql":
                     SQL_ATTEMPTS.append({"sql": payload["sql"]})
                     data = {"rows": sql_tool.run_readonly_sql(payload["sql"], context.user_id)}
@@ -61,7 +72,7 @@ def evaluation_environment(directory):
                                   error={"code": "permission_denied" if exc.status_code == 403 else getattr(exc, "code", "sql_error"), "message": str(exc.detail)})
 
     with ExitStack() as stack:
-        for module in (rag_documents, retrieval, service, sql_tool):
+        for module in (rag_documents, retrieval, service, sql_tool, schema_lookup):
             stack.enter_context(patch.object(module, "db", factory))
         stack.enter_context(patch.object(agent, "tool_executor", FixtureTools()))
         stack.enter_context(patch.object(agent, "has_tool", lambda _agent, tool: tool in {"chat", "catalog_rag", "readonly_sql", "query_result_analysis"}))

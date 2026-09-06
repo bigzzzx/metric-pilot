@@ -1,7 +1,16 @@
 [
-  {"id":"table-orders","kind":"metadata","title":"orders 订单事实表","keywords":["订单","销售额","实付","amount","订单量"],"content":"orders 每行是一笔商品订单。amount 是订单实付金额，quantity 是购买数量，status 为订单状态；可通过 user_id 关联 users、通过 product_id 关联 products。"},
-  {"id":"table-users","kind":"metadata","title":"users 用户维表","keywords":["用户","地区","华东","城市"],"content":"users 保存用户和区域信息。region 是销售大区，city 是所在城市，user_id 可与 orders.user_id 关联。"},
-  {"id":"table-products","kind":"metadata","title":"products 商品维表","keywords":["商品","品类","数码","家居","运动"],"content":"products 保存商品名称、category 品类和 unit_price 标价。product_id 可与 orders.product_id 关联。"},
-  {"id":"metric-sales","kind":"metric","title":"销售额口径","keywords":["销售额","GMV","营收"],"content":"本演示中销售额定义为已支付订单的 SUM(orders.amount)。需要分析品类时关联 products，分析区域时关联 users。"},
-  {"id":"example-category-sales","kind":"sql_example","title":"按区域和品类统计销售额","keywords":["华东","品类","销售额","示例 SQL"],"content":"SELECT p.category, SUM(o.amount) AS sales_amount FROM orders o JOIN users u ON o.user_id=u.user_id JOIN products p ON o.product_id=p.product_id WHERE u.region='华东' AND o.status='PAID' GROUP BY p.category ORDER BY sales_amount DESC"}
+  {
+    "id": "metric-sales",
+    "kind": "metric",
+    "title": "销售额口径",
+    "keywords": ["销售额", "GMV", "营收"],
+    "content": "本演示中销售额定义为已支付订单的 SUM(orders.amount)。需要分析品类时关联 products，需要分析区域时关联 users。"
+  },
+  {
+    "id": "example-category-sales",
+    "kind": "sql_example",
+    "title": "按区域和品类统计销售额",
+    "keywords": ["华东", "品类", "销售额", "示例 SQL"],
+    "content": "SELECT p.category, SUM(o.amount) AS sales_amount FROM orders o JOIN users u ON o.user_id=u.user_id JOIN products p ON o.product_id=p.product_id WHERE u.region='华东' AND o.status='PAID' GROUP BY p.category ORDER BY sales_amount DESC"
+  }
 ]

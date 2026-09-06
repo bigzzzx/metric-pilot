@@ -1,0 +1,77 @@
+{
+  "version": "2.0",
+  "relations": [
+    {
+      "id": "orders_user",
+      "from_table": "orders",
+      "from_column": "user_id",
+      "to_table": "users",
+      "to_column": "user_id",
+      "relation_type": "foreign_key",
+      "cardinality": "many_to_one",
+      "recommended_join": "LEFT JOIN",
+      "verified": true,
+      "description": "订单关联用户，获取区域和城市属性。"
+    },
+    {
+      "id": "orders_product",
+      "from_table": "orders",
+      "from_column": "product_id",
+      "to_table": "products",
+      "to_column": "product_id",
+      "relation_type": "foreign_key",
+      "cardinality": "many_to_one",
+      "recommended_join": "LEFT JOIN",
+      "verified": true,
+      "description": "订单关联商品，获取名称、品类和标价。"
+    },
+    {
+      "id": "payment_order",
+      "from_table": "dwd_payment_detail",
+      "from_column": "order_id",
+      "to_table": "orders",
+      "to_column": "order_id",
+      "relation_type": "foreign_key",
+      "cardinality": "many_to_one",
+      "recommended_join": "LEFT JOIN",
+      "verified": true,
+      "description": "支付明细关联订单，核对支付与交易状态。"
+    },
+    {
+      "id": "purchase_user",
+      "from_table": "dws_user_purchase_30d",
+      "from_column": "user_id",
+      "to_table": "users",
+      "to_column": "user_id",
+      "relation_type": "foreign_key",
+      "cardinality": "many_to_one",
+      "recommended_join": "LEFT JOIN",
+      "verified": true,
+      "description": "用户近30日汇总关联用户维度。"
+    },
+    {
+      "id": "attribution_user",
+      "from_table": "dwd_campaign_attribution",
+      "from_column": "user_id",
+      "to_table": "users",
+      "to_column": "user_id",
+      "relation_type": "foreign_key",
+      "cardinality": "many_to_one",
+      "recommended_join": "LEFT JOIN",
+      "verified": true,
+      "description": "归因明细关联转化用户。"
+    },
+    {
+      "id": "attribution_order",
+      "from_table": "dwd_campaign_attribution",
+      "from_column": "order_id",
+      "to_table": "orders",
+      "to_column": "order_id",
+      "relation_type": "foreign_key",
+      "cardinality": "many_to_one",
+      "recommended_join": "LEFT JOIN",
+      "verified": true,
+      "description": "归因明细关联转化订单。"
+    }
+  ]
+}
