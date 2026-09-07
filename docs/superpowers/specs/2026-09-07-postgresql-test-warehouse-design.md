@@ -23,9 +23,11 @@
 ├── docker-compose.yml
 ├── .env
 ├── init/
+│   ├── 00-reader-role.sh
 │   ├── 01-schema.sql
 │   ├── 02-permissions.sql
-│   └── 03-demo-data.sql
+│   ├── 03-demo-data.sql
+│   └── 04-column-comments.sql
 └── data/
 ```
 
@@ -47,7 +49,7 @@
 
 ## 测试数仓
 
-使用四个 Schema 表示分层，至少覆盖三个业务域和 18 张表：
+使用四个 Schema 表示分层，覆盖三个业务域和 20 张表：
 
 - `ods`：用户、订单、订单项、支付、退款、商品、库存快照、营销事件等原始表。
 - `dwd`：用户、订单、支付、商品、营销事件等清洗明细表。
