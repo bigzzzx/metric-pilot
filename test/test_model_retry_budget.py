@@ -46,6 +46,28 @@ def test_non_json_response_is_not_network_retried():
     assert len(calls) == 1
 
 
+def test_empty_structured_content_retries_once_then_succeeds():
+    calls = []
+    async def operation():
+        calls.append(1)
+        if len(calls) == 1:
+            raise ModelProviderError("empty", status=200, code="model_empty_content")
+        return "ok"
+    assert asyncio.run(run_request(operation)) == "ok"
+    assert len(calls) == 2
+
+
+def test_empty_structured_content_fails_after_one_retry():
+    calls = []
+    async def operation():
+        calls.append(1)
+        raise ModelProviderError("empty", status=200, code="model_empty_content")
+    with pytest.raises(ModelProviderError) as caught:
+        asyncio.run(run_request(operation))
+    assert caught.value.code == "model_empty_content"
+    assert len(calls) == 2
+
+
 def test_total_deadline_cancels_slow_model_without_retry(monkeypatch):
     monkeypatch.setattr(reliability, "MODEL_CALL_SECONDS", 0.02)
     calls, closed = [], []
@@ -126,6 +148,24 @@ def test_provider_client_actually_uses_retry(monkeypatch):
         calls.append(1)
         if len(calls) == 1:
             return httpx.Response(503)
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok":true}'}}]})
+    original = httpx.AsyncClient
+    monkeypatch.setattr(model_client, "_configured_model", lambda *args: row)
+    monkeypatch.setattr(model_client.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
+    content = asyncio.run(model_client._request_content("a", [{"role": "system", "content": "test"}]))
+    assert content == '{"ok":true}' and len(calls) == 2
+
+
+def test_provider_client_retries_empty_200_response(monkeypatch):
+    calls = []
+    row = {"system_prompt": "test", "api_key": "", "kind": "vllm",
+           "provider_name": "fixture", "model_id": "test", "base_url": "http://fixture.invalid"}
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {
+                "content": "", "reasoning_content": "not a final answer",
+            }}]})
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok":true}'}}]})
     original = httpx.AsyncClient
     monkeypatch.setattr(model_client, "_configured_model", lambda *args: row)

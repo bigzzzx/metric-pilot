@@ -58,14 +58,48 @@ def _response_content(response: httpx.Response, provider_kind: str) -> str:
     try:
         if provider_kind == "anthropic-messages":
             blocks = payload["content"]
-            content = next(block["text"] for block in blocks if block.get("type") == "text")
+            if not isinstance(blocks, list):
+                raise TypeError("content blocks must be a list")
+            content = "".join(
+                block.get("text", "") for block in blocks
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+            shape = {
+                "http_status": response.status_code,
+                "provider_kind": provider_kind,
+                "stop_reason": payload.get("stop_reason"),
+                "content_chars": len(content),
+                "reasoning_chars": 0,
+                "tool_calls": sum(
+                    1 for block in blocks
+                    if isinstance(block, dict) and block.get("type") == "tool_use"
+                ),
+                "completion_tokens": (payload.get("usage") or {}).get("output_tokens"),
+            }
         else:
             choices = payload["choices"]
-            content = choices[0]["message"]["content"]
-    except (KeyError, IndexError, StopIteration, TypeError) as exc:
+            choice = choices[0]
+            message = choice["message"]
+            content = message["content"]
+            shape = {
+                "http_status": response.status_code,
+                "provider_kind": provider_kind,
+                "finish_reason": choice.get("finish_reason"),
+                "content_chars": len(content) if isinstance(content, str) else 0,
+                "reasoning_chars": len(message.get("reasoning_content") or ""),
+                "refusal_present": bool(message.get("refusal")),
+                "tool_calls": len(message.get("tool_calls") or []),
+                "completion_tokens": (payload.get("usage") or {}).get("completion_tokens"),
+            }
+    except (AttributeError, KeyError, IndexError, TypeError) as exc:
         raise ModelProviderError("Model provider returned an unexpected response shape") from exc
     if not isinstance(content, str) or not content.strip():
-        raise ModelProviderError("Model provider returned empty content")
+        log_event("model.empty_content", level=30, **shape)
+        raise ModelProviderError(
+            "Model provider returned empty content",
+            status=response.status_code,
+            code="model_empty_content",
+        )
     return content
 
 

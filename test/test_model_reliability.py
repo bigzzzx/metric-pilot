@@ -24,6 +24,23 @@ def test_provider_response_with_empty_choices_is_a_provider_error():
         _response_content(response, "openai-compatible")
 
 
+def test_provider_response_with_reasoning_but_no_final_content_is_recoverable(caplog):
+    response = httpx.Response(200, json={
+        "choices": [{"finish_reason": "stop", "message": {
+            "content": "", "reasoning_content": "internal reasoning", "tool_calls": [],
+        }}],
+        "usage": {"completion_tokens": 12},
+    })
+    with caplog.at_level("INFO", logger="data_agent"):
+        with pytest.raises(ModelProviderError) as caught:
+            _response_content(response, "openai-compatible")
+    assert caught.value.code == "model_empty_content"
+    assert caught.value.status == 200
+    assert "internal reasoning" not in caplog.text
+    assert '"content_chars": 0' in caplog.text
+    assert '"reasoning_chars": 18' in caplog.text
+
+
 def test_invalid_model_output_is_repaired_once(monkeypatch):
     replies = iter(['{"route":"not-a-route"}', '{"route":"general"}'])
 

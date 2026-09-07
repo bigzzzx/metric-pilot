@@ -600,6 +600,7 @@ def sse(event: str, payload: dict) -> str:
 def error_status(code: str) -> int:
     return {
         "model_provider_error": 502,
+        "model_empty_content": 502,
         "invalid_model_output": 422,
         "internal_error": 500,
     }.get(code, 500)
@@ -705,8 +706,8 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
     except ConversationConflictError as exc:
         raise HTTPException(409, str(exc)) from exc
     except ModelProviderError as exc:
-        log_event("api.chat_error", level=30, code="model_provider_error")
-        stored = persist_chat_error(x.session_id, user["id"], client_message_id, str(exc), "model_provider_error", request.state.request_id)
+        log_event("api.chat_error", level=30, code=exc.code)
+        stored = persist_chat_error(x.session_id, user["id"], client_message_id, str(exc), exc.code, request.state.request_id)
         return cached_chat_response(stored)
     except ModelOutputError as exc:
         log_event("api.chat_error", level=30, code="invalid_model_output")
@@ -778,8 +779,8 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
                 else:
                     yield sse(item["event"], {key: value for key, value in item.items() if key != "event"})
         except ModelProviderError as exc:
-            log_event("api.stream_error", level=30, code="model_provider_error")
-            stored = persist_chat_error(x.session_id, user["id"], client_message_id, str(exc), "model_provider_error", request_id)
+            log_event("api.stream_error", level=30, code=exc.code)
+            stored = persist_chat_error(x.session_id, user["id"], client_message_id, str(exc), exc.code, request_id)
             yield sse("error" if stored.get("kind") == "error" else "done", terminal_payload(stored))
         except ModelOutputError as exc:
             log_event("api.stream_error", level=30, code="invalid_model_output")

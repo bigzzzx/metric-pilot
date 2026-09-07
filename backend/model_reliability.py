@@ -25,7 +25,8 @@ class ModelProviderError(RuntimeError):
 
 def transient(exc):
     cause = exc.__cause__ or exc
-    return (isinstance(cause, (httpx.ConnectError, httpx.TimeoutException,
+    return (getattr(exc, "code", None) == "model_empty_content"
+            or isinstance(cause, (httpx.ConnectError, httpx.TimeoutException,
                                httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError))
             or getattr(exc, "status", None) in {408, 429, 502, 503, 504})
 
@@ -76,6 +77,7 @@ async def run_request(operation, *, end=None):
             retry = attempt == 0 and transient(exc) and end - time.monotonic() > RETRY_DELAY_SECONDS
             log_event("model.attempt", node=model_node.get(), attempt=attempt + 1,
                       status="error", http_status=exc.status, retry=retry,
+                      error_code=exc.code,
                       error_type=type(exc.__cause__ or exc).__name__,
                       duration_ms=round((time.monotonic() - started) * 1000))
             if not retry:
