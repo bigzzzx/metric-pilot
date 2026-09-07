@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 
 const SOURCE_KINDS = [
   ['local-sqlite', '本地 SQLite（演示）'],
+  ['postgresql', 'PostgreSQL'],
   ['aws-glue', 'AWS Glue Data Catalog'],
   ['trino', 'Trino / Hive Metastore'],
-  ['postgresql', 'PostgreSQL / MySQL'],
 ];
 
 async function requestJson(url, options) {
@@ -15,8 +15,8 @@ async function requestJson(url, options) {
 }
 
 const emptySource = () => ({
-  name: '', kind: 'aws-glue', endpoint: '', catalog_name: '',
-  auth_type: 'read_only_account', credential: '', enabled: true,
+  name: '', kind: 'postgresql', endpoint: '127.0.0.1:15433', catalog_name: '',
+  auth_type: 'read_only_account', username: '', credential: '', enabled: true,
 });
 
 /** Admin-only data-source controls. The API enforces this permission as well. */
@@ -59,7 +59,7 @@ export default function DataSourceAdminPanel() {
     setBusy(true); setNotice('');
     try {
       const result = await requestJson(`/api/data-sources/${draft.id}/${action}`, { method: 'POST' });
-      setNotice(action === 'sync' ? `已发现 ${result.table_count} 张表，等待在目录中补充语义并发布。` : result.message || '连接测试成功。');
+      setNotice(action === 'sync' ? `已发现 ${result.table_count} 张表、${result.relationship_count || 0} 条关系，并保存为目录草稿。` : result.message || '连接测试成功。');
       await loadSources();
     } catch (error) {
       setNotice(`${action === 'sync' ? '采集' : '测试'}失败：${error.message}`);
@@ -77,14 +77,15 @@ export default function DataSourceAdminPanel() {
         <h2>{draft.id ? '编辑数据源' : '添加数据源'}</h2>
         <label>名称<input required value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如：生产数仓" /></label>
         <label>连接类型<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value })}>{SOURCE_KINDS.map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
-        <label>Endpoint / 地址<input value={draft.endpoint || ''} onChange={event => setDraft({ ...draft, endpoint: event.target.value })} placeholder="例如：https://trino.example.com" /></label>
-        <label>Catalog / 数据库<input value={draft.catalog_name || ''} onChange={event => setDraft({ ...draft, catalog_name: event.target.value })} placeholder="例如：warehouse" /></label>
+        <label>Endpoint / 地址<input value={draft.endpoint || ''} onChange={event => setDraft({ ...draft, endpoint: event.target.value })} placeholder={draft.kind === 'postgresql' ? '例如：10.0.0.5:5432' : '例如：https://trino.example.com'} /></label>
+        <label>Catalog / 数据库<input value={draft.catalog_name || ''} onChange={event => setDraft({ ...draft, catalog_name: event.target.value })} placeholder="例如：data_agent_warehouse" /></label>
         <label>认证方式<select value={draft.auth_type} onChange={event => setDraft({ ...draft, auth_type: event.target.value })}><option value="none">无需认证</option><option value="read_only_account">只读账号 / Access Key</option><option value="token">访问令牌</option></select></label>
-        <label>凭据<input type="password" value={draft.credential || ''} onChange={event => setDraft({ ...draft, credential: event.target.value })} placeholder={draft.credential_configured ? '留空保持已有凭据' : '仅保存加密后的凭据'} /></label>
+        {draft.kind === 'postgresql' && <label>只读用户名<input value={draft.username || ''} onChange={event => setDraft({ ...draft, username: event.target.value })} placeholder="例如：data_agent_reader" autoComplete="off" /></label>}
+        <label>{draft.kind === 'postgresql' ? '密码' : '凭据'}<input type="password" value={draft.credential || ''} onChange={event => setDraft({ ...draft, credential: event.target.value })} placeholder={draft.credential_configured ? '留空保持已有密码' : '保存时由服务端加密'} autoComplete="new-password" /></label>
         <label className="tool-check"><input type="checkbox" checked={Boolean(draft.enabled)} onChange={event => setDraft({ ...draft, enabled: event.target.checked })} />启用数据源</label>
         <div className="source-actions"><button disabled={busy}>保存</button>{draft.id && <><button type="button" className="outline-button" disabled={busy || !draft.enabled} onClick={() => runAction('test')}>测试连接</button><button type="button" className="outline-button" disabled={busy || !draft.enabled} onClick={() => runAction('sync')}>采集表结构</button></>}</div>
       </> : <p>点击“添加数据源”开始配置。</p>}</form>
-      <p className="source-note">请配置只读账号。采集到的是技术元数据草稿；补充业务语义、权限和质量信息并发布后，资产才会进入数据目录和 RAG。</p>
+      <p className="source-note">请配置只读账号。数据源中已有的表、字段说明和主外键会被一并采集；目录审核发布后进入 RAG。</p>
     </div>
     {notice && <p className="save-notice catalog-notice" role="status">{notice}</p>}
   </section>;

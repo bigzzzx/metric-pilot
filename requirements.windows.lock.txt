@@ -58,6 +58,8 @@ pdfplumber==0.11.10
 pillow==12.3.0
 pluggy==1.6.0
 protobuf==7.35.1
+psycopg==3.3.5
+psycopg-binary==3.3.5
 pycparser==3.0
 pydantic==2.13.4
 pydantic-settings==2.15.0

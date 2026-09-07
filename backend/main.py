@@ -16,7 +16,8 @@ from backend.catalog import init_catalog_schema
 from backend.catalog.repository import provision_user_access
 from backend.catalog.publications import import_discovery_as_draft, require_catalog_admin, require_platform_admin
 from backend.catalog.service import is_platform_admin
-from backend.connectors import ConnectorUnavailable, connector_for
+from backend.connectors import ConnectorUnavailable
+from backend.data_sources.service import connector_from_row, encrypted_password, source_view
 from backend.conversations import (
     begin_turn,
     completed_response,
@@ -70,7 +71,7 @@ def init_storage(connection_factory=None):
     CREATE TABLE IF NOT EXISTS sessions(session_id TEXT,role TEXT,content TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS auth_sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS data_sources(id TEXT PRIMARY KEY,name TEXT,kind TEXT,endpoint TEXT,catalog_name TEXT,auth_type TEXT,credential TEXT,enabled INTEGER,last_synced_at TEXT);
+    CREATE TABLE IF NOT EXISTS data_sources(id TEXT PRIMARY KEY,name TEXT,kind TEXT,endpoint TEXT,catalog_name TEXT,auth_type TEXT,credential TEXT,enabled INTEGER,last_synced_at TEXT,username TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT DEFAULT '',instructions TEXT NOT NULL,enabled INTEGER DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY,name TEXT NOT NULL,transport TEXT NOT NULL,endpoint TEXT NOT NULL,api_key TEXT DEFAULT '',enabled INTEGER DEFAULT 1,last_tested_at TEXT,last_test_status TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     """)
@@ -86,6 +87,8 @@ def init_storage(connection_factory=None):
     provider_columns = {row["name"] for row in con.execute("PRAGMA table_info(providers)")}
     if "connection_mode" not in provider_columns: con.execute("ALTER TABLE providers ADD COLUMN connection_mode TEXT NOT NULL DEFAULT 'direct'")
     if "proxy_url" not in provider_columns: con.execute("ALTER TABLE providers ADD COLUMN proxy_url TEXT NOT NULL DEFAULT ''")
+    source_columns = {row["name"] for row in con.execute("PRAGMA table_info(data_sources)")}
+    if "username" not in source_columns: con.execute("ALTER TABLE data_sources ADD COLUMN username TEXT NOT NULL DEFAULT ''")
     if not con.execute("SELECT 1 FROM providers").fetchone() and os.getenv("DEEPSEEK_API_KEY"):
         provider_id, model_id = str(uuid.uuid4()), str(uuid.uuid4())
         con.execute("INSERT INTO providers(id,name,kind,base_url,api_key,enabled,connection_mode,proxy_url) VALUES (?,?,?,?,?,1,'direct','')", (provider_id,"DeepSeek","openai-compatible",os.getenv("DEEPSEEK_BASE_URL","https://api.deepseek.com"),secrets().encrypt(os.environ["DEEPSEEK_API_KEY"].encode()).decode()))
@@ -141,7 +144,9 @@ def init_storage(connection_factory=None):
     # The pre-LangGraph single-agent configuration is obsolete. Runtime nodes
     # use the three role-specific configurations above.
     con.execute("DELETE FROM agents WHERE id='data-agent'")
-    con.execute("INSERT OR IGNORE INTO data_sources VALUES (?,?,?,?,?,?,?,?,?)", ("local-ecommerce-demo", "本地电商演示数仓", "local-sqlite", "local://demo.db", "ecommerce", "none", "", 1, None))
+    con.execute("""INSERT OR IGNORE INTO data_sources
+      (id,name,kind,endpoint,catalog_name,auth_type,credential,enabled,last_synced_at,username)
+      VALUES (?,?,?,?,?,?,?,?,?,?)""", ("local-ecommerce-demo", "本地电商演示数仓", "local-sqlite", "local://demo.db", "ecommerce", "none", "", 1, None, ""))
     con.execute("INSERT OR IGNORE INTO knowledge_bases(id,name,description) VALUES (?,?,?)", ("business-knowledge", "业务知识库", "存放指标口径、业务别名、数据使用说明等可检索知识。"))
     con.commit(); con.close()
     init_catalog_schema(connection_factory)
@@ -169,6 +174,7 @@ class DataSourceIn(BaseModel):
     endpoint: str = ""
     catalog_name: str = ""
     auth_type: str = "read_only_account"
+    username: str = Field(default="", max_length=128)
     credential: str = ""
     enabled: bool = True
 class DataSourceUpdate(DataSourceIn):
@@ -419,7 +425,7 @@ async def sync_mcp_server(server_id: str, user: dict = Depends(require_user)):
 
 
 def data_source_view(row) -> dict:
-    return {"id": row["id"], "name": row["name"], "kind": row["kind"], "endpoint": row["endpoint"], "catalog_name": row["catalog_name"], "auth_type": row["auth_type"], "credential_configured": bool(row["credential"]), "enabled": bool(row["enabled"]), "last_synced_at": row["last_synced_at"]}
+    return source_view(row)
 
 
 @app.get("/api/data-sources")
@@ -432,8 +438,10 @@ def data_sources(user: dict = Depends(require_user)):
 def create_data_source(payload: DataSourceIn, user: dict = Depends(require_user)):
     require_platform_admin(user["id"])
     source_id = str(uuid.uuid4())
-    credential = secrets().encrypt(payload.credential.encode()).decode() if payload.credential else ""
-    con = db(); con.execute("INSERT INTO data_sources VALUES (?,?,?,?,?,?,?,?,?)", (source_id, payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), None)); con.commit()
+    credential = encrypted_password(payload.credential)
+    con = db(); con.execute("""INSERT INTO data_sources
+      (id,name,kind,endpoint,catalog_name,auth_type,credential,enabled,last_synced_at,username)
+      VALUES (?,?,?,?,?,?,?,?,?,?)""", (source_id, payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), None, payload.username)); con.commit()
     row = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone(); con.close(); return data_source_view(row)
 
 
@@ -443,22 +451,22 @@ def update_data_source(source_id: str, payload: DataSourceUpdate, user: dict = D
     con = db(); existing = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone()
     if not existing:
         con.close(); raise HTTPException(404, "Data source not found")
-    credential = secrets().encrypt(payload.credential.encode()).decode() if payload.credential else existing["credential"]
-    con.execute("UPDATE data_sources SET name=?,kind=?,endpoint=?,catalog_name=?,auth_type=?,credential=?,enabled=? WHERE id=?", (payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), source_id)); con.commit()
+    credential = encrypted_password(payload.credential, existing["credential"])
+    con.execute("UPDATE data_sources SET name=?,kind=?,endpoint=?,catalog_name=?,auth_type=?,credential=?,enabled=?,username=? WHERE id=?", (payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), payload.username, source_id)); con.commit()
     row = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone(); con.close(); return data_source_view(row)
 
 
 def source_connector(source_id: str):
     con = db(); row = con.execute("SELECT * FROM data_sources WHERE id=? AND enabled=1", (source_id,)).fetchone(); con.close()
     if not row: raise HTTPException(404, "Enabled data source not found")
-    return row, connector_for(row["kind"])
+    return row, connector_from_row(row)
 
 
 @app.post("/api/data-sources/{source_id}/test")
 def test_data_source(source_id: str, user: dict = Depends(require_user)):
     require_platform_admin(user["id"])
-    row, connector = source_connector(source_id)
     try:
+        row, connector = source_connector(source_id)
         result = connector.test()
         log_event("catalog.source_test", source_id=source_id, kind=row["kind"], status=result["status"])
         return result
@@ -469,8 +477,8 @@ def test_data_source(source_id: str, user: dict = Depends(require_user)):
 @app.post("/api/data-sources/{source_id}/sync")
 def sync_data_source(source_id: str, user: dict = Depends(require_user)):
     require_platform_admin(user["id"])
-    row, connector = source_connector(source_id)
     try:
+        row, connector = source_connector(source_id)
         result = connector.discover()
         con = db(); con.execute("UPDATE data_sources SET last_synced_at=CURRENT_TIMESTAMP WHERE id=?", (source_id,)); con.commit(); con.close()
         log_event("catalog.source_sync", source_id=source_id, kind=row["kind"], table_count=result["table_count"])

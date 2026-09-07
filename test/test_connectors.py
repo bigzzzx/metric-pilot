@@ -18,3 +18,9 @@ def test_uninstalled_remote_connector_is_explicit():
         assert "not installed" in str(exc)
     else:
         raise AssertionError("An uninstalled remote connector must not claim it connected")
+
+
+def test_postgresql_connector_is_registered():
+    connector = connector_for("postgresql")
+
+    assert connector.__class__.__name__ == "PostgresConnector"

@@ -1,6 +1,6 @@
 # Data Agent（本地开发版）
 
-面向数据目录检索、自然语言取数和结果分析的 LangGraph Agent。当前以本地电商 SQLite 数仓作为演示数据源，同时为云上数据源、自建集群和外部知识文件保留了扩展接口。
+面向数据目录检索、自然语言取数和结果分析的 LangGraph Agent。当前支持本地 SQLite 演示库和 PostgreSQL 元数据连接器，并为更多云上数据源、自建集群和外部知识文件保留扩展接口。
 
 ## 启动
 
@@ -25,6 +25,19 @@ npm run dev
 新环境使用 `.env` 时可用 `.venv\\Scripts\\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 3001 --env-file .env` 启动后端。只有全新演示环境才运行 `scripts/seed_demo_warehouse.py`：它会重建 `.data/demo.db` 并重写演示元数据，已有数据时不要执行。`APP_ENCRYPTION_KEY` 必须是有效 Fernet 密钥，已有部署不得随意更换。
 
 独立回归测试：`.venv\\Scripts\\python.exe scripts/test_backend_isolated.py`（临时库、离线向量配置，不依赖个人 `.env`）。
+
+## 接入 PostgreSQL 数据源
+
+本机开发时先运行 `scripts/start-milvus-tunnel.ps1`。该脚本除 Milvus、embedding 和 reranker 外，还会把服务器上的测试 PostgreSQL 映射到本机 `127.0.0.1:15433`。生产部署不依赖该隧道，应填写 PostgreSQL 的内网/VPC 地址。
+
+使用平台管理员账号登录后，进入“系统管理 → 数据源管理 → 添加数据源”，依次填写：
+
+- 类型：`PostgreSQL`
+- 地址：本机开发填写 `127.0.0.1:15433`，生产环境填写数据库内网地址及端口
+- 数据库：例如 `data_agent_warehouse`
+- 只读用户名与密码：使用专门的查询账号，不使用数据库管理员账号
+
+保存后先点击“测试连接”，确认返回只读连接成功；再点击“采集表结构”。连接器会采集 Schema、表、字段、数据类型、表/字段注释、主键和外键关系，并保存为可审核的目录草稿。密码由后端使用 Fernet 加密，只返回“已配置”状态，不会回传浏览器或写入 Git。
 
 ## 启用 DeepSeek 对话 Agent
 
@@ -76,8 +89,8 @@ npm run api
 | 能力 | 当前实现 |
 | --- | --- |
 | Agent 编排 | Python + FastAPI + LangGraph，路由到 General、Data Query、Data Analysis、ETL 节点 |
-| 数据目录 | `metadata/catalog.json`、`relations.json` 与远端连接器扩展接口 |
-| 只读查询 | Python SQLite 工具模拟 Athena，只允许目录白名单内的 SELECT/CTE |
+| 数据目录 | 本地元数据文件、PostgreSQL 自动采集与远端连接器扩展接口 |
+| 只读查询 | 当前 SQLite 执行器只允许目录白名单内的 SELECT/CTE；PostgreSQL 查询执行器是下一阶段 |
 | RAG 知识库 | 多格式结构解析 + SQLite 元数据 + Milvus BGE 向量 + 中文 BM25 + RRF + reranker |
 | 上下文管理 | SQLite 会话、最近消息窗口、长会话摘要、显式跨会话长期记忆 |
 | 模型接入 | 可配置供应商、模型与智能体绑定，响应由 Pydantic 校验 |
