@@ -500,6 +500,11 @@ WHERE supports equality predicates only. UPDATE and DELETE must include a WHERE 
 column, value, or condition that the user did not provide. If anything required is ambiguous, set ready=false and
 ask one concise Chinese clarification question. Return JSON only with keys ready, operation, table, values, where,
 summary, clarification. Each where item has column and value.
+ready means the parameters are complete to PREPARE AN APPROVAL REQUEST, not that execution is approved.
+When the table, values and predicates are explicit, set ready=true even if the user says to wait for approval.
+This planner cannot execute writes or grant permission. The backend independently checks permissions and
+shows the approval card before executing. Do not replace that card with a conversational approval question.
+Use clarification only for missing or ambiguous operation parameters, never to ask for approval.
 
 Writable local demo schema:
 ''' + writable_schema_summary()
