@@ -57,7 +57,9 @@ def can_access(user_id: str, action: str, *, asset_id: str | None = None, domain
 
 def _asset_view(con: sqlite3.Connection, asset: sqlite3.Row, user_id: str) -> dict[str, Any]:
     result = dict(asset); result["aliases"] = _json(result.pop("aliases_json", "[]"), [])
-    result["can_query"] = can_access(user_id, QUERY_DATA, asset_id=result["id"], connection=con)
+    # The current SQL executor only supports the built-in SQLite warehouse.
+    result["can_query"] = result["publish_status"] == "published" and result["source_id"] == "local-ecommerce-demo" and can_access(user_id, QUERY_DATA, asset_id=result["id"], connection=con)
+    result["can_manage"] = can_access(user_id, MANAGE, connection=con)
     quality = con.execute("SELECT score,freshness_at,completeness,validity,status,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC LIMIT 1", (result["id"],)).fetchone()
     result["quality"] = dict(quality) if quality else None
     return result
@@ -92,7 +94,9 @@ def list_assets(user_id: str, *, query: str = "", domain_id: str | None = None, 
 def _relationship_view(con: sqlite3.Connection, row: sqlite3.Row, user_id: str) -> dict[str, Any]:
     result = dict(row)
     for prefix, field in (("from","from_asset_id"),("to","to_asset_id")):
-        asset = con.execute("SELECT display_name,physical_name FROM catalog_assets WHERE id=?", (row[field],)).fetchone()
+        asset = con.execute("SELECT display_name,physical_name,publish_status FROM catalog_assets WHERE id=?", (row[field],)).fetchone()
+        if asset and asset["publish_status"] != "published" and not can_access(user_id, MANAGE, connection=con):
+            asset = None
         result[f"{prefix}_asset"] = dict(asset) if asset else None
     result["visible"] = bool(result["from_asset"] and result["to_asset"] and can_access(user_id,DISCOVER,asset_id=row["from_asset_id"],connection=con) and can_access(user_id,DISCOVER,asset_id=row["to_asset_id"],connection=con))
     return result
@@ -107,7 +111,10 @@ def get_asset(user_id: str, asset_id: str) -> dict[str, Any]:
         column["aliases"] = _json(column.pop("aliases_json", "[]"), []); column["enum_values"] = _json(column.pop("enum_values_json", "[]"), [])
         column["masked_in_samples"] = column["masking_strategy"] != "none" or column["sensitivity"] in {"sensitive","restricted"}
     result["columns"] = columns
-    result["relationships"] = [_relationship_view(con,row,user_id) for row in con.execute("SELECT * FROM catalog_relationships WHERE from_asset_id=? OR to_asset_id=?", (asset_id,asset_id))]
+    result["relationships"] = [_relationship_view(con,row,user_id) for row in con.execute("SELECT * FROM catalog_relationships WHERE from_asset_id=? OR to_asset_id=?", (asset_id,asset_id)) if can_manage or row["status"] == "published"]
+    if can_manage:
+        note = con.execute("SELECT detail_json FROM catalog_audit_logs WHERE entity_id=? AND action IN ('reject','withdraw') ORDER BY id DESC LIMIT 1", (asset_id,)).fetchone()
+        result["review_note"] = _json(note["detail_json"], {}).get("reason", "") if note else ""
     result["metrics"] = _rows(con.execute("SELECT id,name,display_name,description,formula,grain,certification_status FROM catalog_metrics WHERE domain_id=? AND publish_status='published' ORDER BY display_name", (asset["domain_id"],)))
     result["quality_history"] = _rows(con.execute("SELECT score,freshness_at,completeness,validity,status,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC LIMIT 12", (asset_id,)))
     con.close(); return result
@@ -122,7 +129,7 @@ def _mask(value: Any, sensitivity: str, strategy: str) -> Any:
 
 def sample_asset(user_id: str, asset_id: str, limit: int = 5) -> dict[str, Any]:
     limit = max(1,min(int(limit),5)); con = db(); asset = con.execute("SELECT * FROM catalog_assets WHERE id=? AND publish_status='published'", (asset_id,)).fetchone()
-    if not asset or not can_access(user_id,QUERY_DATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Sample data not authorized")
+    if not asset or asset["source_id"] != "local-ecommerce-demo" or not can_access(user_id,QUERY_DATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Sample data not authorized or source executor unavailable")
     columns = _rows(con.execute("SELECT physical_name,sensitivity,masking_strategy FROM catalog_columns WHERE asset_id=? ORDER BY ordinal", (asset_id,))); con.close()
     names = [column["physical_name"] for column in columns]
     if not names: return {"rows": [],"columns": [],"limit": limit,"masked": True}

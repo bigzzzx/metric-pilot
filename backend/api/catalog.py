@@ -5,6 +5,7 @@ from backend.auth import require_user
 from backend.catalog.publications import publish_asset, require_catalog_admin
 from backend.catalog.retrieval import catalog_overview, lineage_for_asset
 from backend.catalog.service import get_asset, list_assets, list_domains, list_metrics, list_terms, sample_asset
+from backend.catalog.review import AssetReview, ReviewDecision, save_review, change_status
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 
@@ -48,9 +49,33 @@ def metrics(user: dict = Depends(require_user)): return list_metrics(user["id"])
 def terms(user: dict = Depends(require_user)): return list_terms(user["id"])
 
 
-@router.post("/admin/assets/{asset_id}/publish")
-def publish_catalog_asset(asset_id: str, user: dict = Depends(require_user)):
+@router.put("/admin/assets/{asset_id}/review")
+def review_catalog_asset(asset_id: str, payload: AssetReview, user: dict = Depends(require_user)):
     try:
-        return publish_asset(asset_id, user["id"])
+        return save_review(asset_id, user["id"], payload)
+    except LookupError as exc:
+        raise HTTPException(404, "Data asset not found") from exc
+
+
+@router.post("/admin/assets/{asset_id}/reject")
+def reject_catalog_asset(asset_id: str, payload: ReviewDecision, user: dict = Depends(require_user)):
+    try:
+        return change_status(asset_id, user["id"], payload)
+    except LookupError as exc:
+        raise HTTPException(404, "Data asset not found") from exc
+
+
+@router.post("/admin/assets/{asset_id}/withdraw")
+def withdraw_catalog_asset(asset_id: str, payload: ReviewDecision, user: dict = Depends(require_user)):
+    try:
+        return change_status(asset_id, user["id"], payload, withdraw=True)
+    except LookupError as exc:
+        raise HTTPException(404, "Data asset not found") from exc
+
+
+@router.post("/admin/assets/{asset_id}/publish")
+def publish_catalog_asset(asset_id: str, version: int | None = Query(default=None, ge=0), user: dict = Depends(require_user)):
+    try:
+        return publish_asset(asset_id, user["id"], expected_version=version)
     except LookupError as exc:
         raise HTTPException(404, "Data asset not found") from exc

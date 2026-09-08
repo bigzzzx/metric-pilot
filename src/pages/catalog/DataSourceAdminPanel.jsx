@@ -63,7 +63,7 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
     setBusy(true); setNotice('');
     try {
       const result = await requestJson(`/api/data-sources/${draft.id}/${action}`, { method: 'POST' });
-      setNotice(action === 'sync' ? `已发现 ${result.table_count} 张表、${result.relationship_count || 0} 条关系，并保存为目录草稿。` : result.message || '连接测试成功。');
+      setNotice(action === 'sync' ? `已发现 ${result.table_count} 张表、${result.relationship_count || 0} 条关系；${result.preserved || 0} 个已审核资产保持原样，其余保存为草稿。请到“数据资产 → 待审核”进行审核发布。` : result.message || '连接测试成功。');
       await loadSources();
       if (action === 'sync') onCatalogChanged();
     } catch (error) {

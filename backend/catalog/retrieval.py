@@ -16,7 +16,7 @@ def authorized_query_schema(user_id: str) -> dict[str, set[str]]:
     never enters the model context in this reference application.
     """
     con = db(); result: dict[str, set[str]] = {}
-    for asset in con.execute("SELECT id,physical_name FROM catalog_assets WHERE publish_status='published'"):
+    for asset in con.execute("SELECT id,physical_name FROM catalog_assets WHERE publish_status='published' AND source_id='local-ecommerce-demo'"):
         if not can_access(user_id, QUERY_DATA, asset_id=asset["id"], connection=con): continue
         fields = con.execute("SELECT physical_name,sensitivity FROM catalog_columns WHERE asset_id=?", (asset["id"],)).fetchall()
         result[asset["physical_name"]] = {field["physical_name"] for field in fields if field["sensitivity"] not in {"sensitive","restricted"}}
@@ -35,7 +35,10 @@ def catalog_overview(user_id: str) -> dict[str, Any]:
 
 def lineage_for_asset(user_id: str, asset_id: str, hops: int = 2) -> dict[str, list[dict[str, Any]]]:
     if not can_access(user_id, DISCOVER, asset_id=asset_id): raise LookupError("Lineage not authorized")
-    con = db(); anchor = con.execute("SELECT id FROM catalog_lineage_nodes WHERE asset_id=? AND published=1", (asset_id,)).fetchone()
+    con = db()
+    if not con.execute("SELECT 1 FROM catalog_assets WHERE id=? AND publish_status='published'", (asset_id,)).fetchone():
+        con.close(); raise LookupError("Lineage asset is not published")
+    anchor = con.execute("SELECT id FROM catalog_lineage_nodes WHERE asset_id=? AND published=1", (asset_id,)).fetchone()
     if not anchor: con.close(); return {"nodes":[],"edges":[]}
     seen, frontier, edges = {anchor["id"]}, {anchor["id"]}, []
     for _ in range(max(1,min(hops,3))):
@@ -47,6 +50,6 @@ def lineage_for_asset(user_id: str, asset_id: str, hops: int = 2) -> dict[str, l
         frontier = next_frontier - seen; seen.update(next_frontier)
     nodes = [dict(row) for row in con.execute("SELECT * FROM catalog_lineage_nodes WHERE id IN (%s)" % ",".join("?" for _ in seen),list(seen))]
     for node in nodes:
-        if node.get("asset_id") and not can_access(user_id, DISCOVER, asset_id=node["asset_id"],connection=con):
+        if node.get("asset_id") and (not con.execute("SELECT 1 FROM catalog_assets WHERE id=? AND publish_status='published'", (node["asset_id"],)).fetchone() or not can_access(user_id, DISCOVER, asset_id=node["asset_id"],connection=con)):
             node.update({"display_name":"受限资产","description":"你无权查看此上游或下游资产的详情。","restricted":True})
     con.close(); return {"nodes":nodes,"edges":edges}
