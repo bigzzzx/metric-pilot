@@ -38,7 +38,7 @@ class LocalSqliteConnector:
                 primary_key = [column["name"] for column in columns if column["is_primary_key"]]
                 tables.append(
                     {
-                        "namespace": "main",
+                        "namespace": "",
                         "name": name,
                         "description": "",
                         "primary_key": primary_key,

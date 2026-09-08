@@ -65,21 +65,26 @@ def _asset_view(con: sqlite3.Connection, asset: sqlite3.Row, user_id: str) -> di
 
 def list_domains(user_id: str) -> list[dict[str, Any]]:
     con = db(); result = []
+    can_manage = can_access(user_id, MANAGE, connection=con)
     for row in con.execute("SELECT * FROM catalog_domains WHERE active=1 ORDER BY display_name"):
         if can_access(user_id, DISCOVER, domain_id=row["id"], connection=con):
-            item = dict(row); item["asset_count"] = con.execute("SELECT COUNT(*) AS count FROM catalog_assets WHERE domain_id=? AND publish_status='published'", (row["id"],)).fetchone()["count"]; result.append(item)
+            item = dict(row)
+            item["asset_count"] = con.execute("SELECT COUNT(*) AS count FROM catalog_assets WHERE domain_id=? AND publish_status='published'", (row["id"],)).fetchone()["count"]
+            item["draft_asset_count"] = con.execute("SELECT COUNT(*) AS count FROM catalog_assets WHERE domain_id=? AND publish_status='draft'", (row["id"],)).fetchone()["count"] if can_manage else 0
+            result.append(item)
     con.close(); return result
 
 
 def list_assets(user_id: str, *, query: str = "", domain_id: str | None = None, layer: str | None = None, source_id: str | None = None, sensitivity: str | None = None) -> list[dict[str, Any]]:
-    con = db(); clauses = ["publish_status='published'"]; values: list[Any] = []
+    con = db(); clauses = [] if can_access(user_id, MANAGE, connection=con) else ["publish_status='published'"]; values: list[Any] = []
     if domain_id: clauses.append("domain_id=?"); values.append(domain_id)
     if layer: clauses.append("warehouse_layer=?"); values.append(layer)
     if source_id: clauses.append("source_id=?"); values.append(source_id)
     if sensitivity: clauses.append("sensitivity=?"); values.append(sensitivity)
     if query.strip():
         clauses.append("(physical_name LIKE ? OR display_name LIKE ? OR description LIKE ? OR aliases_json LIKE ?)"); values.extend([f"%{query.strip()}%"] * 4)
-    sql = "SELECT * FROM catalog_assets WHERE " + " AND ".join(clauses) + " ORDER BY certification_status='certified' DESC,display_name"
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    sql = "SELECT * FROM catalog_assets" + where + " ORDER BY publish_status='published' DESC,certification_status='certified' DESC,display_name"
     result = [_asset_view(con,row,user_id) for row in con.execute(sql,values) if can_access(user_id,DISCOVER,asset_id=row["id"],connection=con)]
     con.close(); return result
 
@@ -94,8 +99,9 @@ def _relationship_view(con: sqlite3.Connection, row: sqlite3.Row, user_id: str) 
 
 
 def get_asset(user_id: str, asset_id: str) -> dict[str, Any]:
-    con = db(); asset = con.execute("SELECT * FROM catalog_assets WHERE id=? AND publish_status='published'", (asset_id,)).fetchone()
-    if not asset or not can_access(user_id,VIEW_METADATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Asset not found or not authorized")
+    con = db(); asset = con.execute("SELECT * FROM catalog_assets WHERE id=?", (asset_id,)).fetchone()
+    can_manage = can_access(user_id, MANAGE, connection=con)
+    if not asset or (asset["publish_status"] != "published" and not can_manage) or not can_access(user_id,VIEW_METADATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Asset not found or not authorized")
     result = _asset_view(con,asset,user_id); columns = _rows(con.execute("SELECT * FROM catalog_columns WHERE asset_id=? ORDER BY ordinal", (asset_id,)))
     for column in columns:
         column["aliases"] = _json(column.pop("aliases_json", "[]"), []); column["enum_values"] = _json(column.pop("enum_values_json", "[]"), [])

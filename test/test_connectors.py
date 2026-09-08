@@ -6,6 +6,7 @@ def test_local_sqlite_connector_discovers_demo_tables():
 
     assert result["status"] == "discovered"
     assert {table["name"] for table in result["tables"]} >= {"users", "orders", "products"}
+    assert all(table["namespace"] == "" for table in result["tables"])
     assert any(column["name"] == "order_id" for table in result["tables"] if table["name"] == "orders" for column in table["columns"])
 
 

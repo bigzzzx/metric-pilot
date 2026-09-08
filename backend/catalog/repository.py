@@ -68,7 +68,35 @@ def init_catalog_schema(connection_factory=None) -> None:
     _seed_governance(con)
     _seed_demo_catalog(con)
     _bootstrap_existing_users(con)
+    _cleanup_legacy_local_sync_duplicates(con)
     con.commit(); con.close()
+
+
+def _cleanup_legacy_local_sync_duplicates(con: sqlite3.Connection) -> None:
+    """Remove drafts created when SQLite's implicit `main` namespace was treated as a second catalog."""
+    duplicate_ids = [row["id"] for row in con.execute("""
+      SELECT draft.id
+      FROM catalog_assets draft
+      WHERE draft.source_id='local-ecommerce-demo'
+        AND draft.namespace='main'
+        AND draft.publish_status='draft'
+        AND EXISTS (
+          SELECT 1 FROM catalog_assets published
+          WHERE published.source_id=draft.source_id
+            AND published.namespace=''
+            AND published.physical_name=draft.physical_name
+            AND published.publish_status='published'
+        )
+    """)]
+    if not duplicate_ids:
+        return
+    holders = ",".join("?" for _ in duplicate_ids)
+    con.execute(
+        f"DELETE FROM catalog_relationships WHERE from_asset_id IN ({holders}) OR to_asset_id IN ({holders})",
+        [*duplicate_ids, *duplicate_ids],
+    )
+    con.execute(f"DELETE FROM catalog_columns WHERE asset_id IN ({holders})", duplicate_ids)
+    con.execute(f"DELETE FROM catalog_assets WHERE id IN ({holders})", duplicate_ids)
 
 
 def _seed_governance(con: sqlite3.Connection) -> None:

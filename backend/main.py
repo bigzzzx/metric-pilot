@@ -17,7 +17,14 @@ from backend.catalog.repository import provision_user_access
 from backend.catalog.publications import import_discovery_as_draft, require_catalog_admin, require_platform_admin
 from backend.catalog.service import is_platform_admin
 from backend.connectors import ConnectorUnavailable
-from backend.data_sources.service import connector_from_row, encrypted_password, source_view
+from backend.data_sources.service import (
+    DataSourceInUse,
+    DataSourceProtected,
+    connector_from_row,
+    delete_source,
+    encrypted_password,
+    source_view,
+)
 from backend.conversations import (
     begin_turn,
     completed_response,
@@ -454,6 +461,19 @@ def update_data_source(source_id: str, payload: DataSourceUpdate, user: dict = D
     credential = encrypted_password(payload.credential, existing["credential"])
     con.execute("UPDATE data_sources SET name=?,kind=?,endpoint=?,catalog_name=?,auth_type=?,credential=?,enabled=?,username=? WHERE id=?", (payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), payload.username, source_id)); con.commit()
     row = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone(); con.close(); return data_source_view(row)
+
+
+@app.delete("/api/data-sources/{source_id}")
+def remove_data_source(source_id: str, user: dict = Depends(require_user)):
+    require_platform_admin(user["id"])
+    try:
+        return delete_source(source_id, user["id"])
+    except LookupError as exc:
+        raise HTTPException(404, "Data source not found") from exc
+    except DataSourceProtected as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except DataSourceInUse as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 def source_connector(source_id: str):

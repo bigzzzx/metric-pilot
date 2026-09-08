@@ -1,0 +1,83 @@
+/* Data-source editor refinements kept local to the catalog administration UI. */
+.source-form-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 30px;
+}
+
+.source-form-heading h2 { margin: 0; }
+
+.source-enabled-control {
+  position: relative;
+  display: flex !important;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: end;
+  gap: 8px !important;
+  color: #56616d !important;
+  cursor: pointer;
+  user-select: none;
+}
+
+.source-enabled-control input {
+  position: absolute;
+  width: 1px !important;
+  height: 1px;
+  opacity: 0;
+}
+
+.source-enabled-control i {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: #cfd5dc;
+  transition: background .16s ease;
+}
+
+.source-enabled-control i::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18);
+  transition: transform .16s ease;
+}
+
+.source-enabled-control input:checked + i { background: #4b8af0; }
+.source-enabled-control input:checked + i::after { transform: translateX(15px); }
+.source-enabled-control input:focus-visible + i { outline: 2px solid #9fc0f3; outline-offset: 2px; }
+
+.source-form label > small {
+  min-height: 24px;
+  color: #8a939e;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.source-actions { align-items: center; }
+.source-actions .danger-button {
+  margin-left: auto;
+  border: 1px solid #ecc9c6;
+  background: #fff;
+  color: #b0443c;
+}
+.source-actions .danger-button:hover { background: #fff5f4; }
+
+.asset-card.draft {
+  border-style: dashed;
+  background: #fbfcfe;
+}
+
+@media (max-width: 700px) {
+  .source-form-heading { align-items: flex-start; }
+  .source-actions { flex-wrap: wrap; }
+  .source-actions .danger-button { margin-left: 0; }
+}

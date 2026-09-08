@@ -50,7 +50,9 @@ def import_discovery_as_draft(source_id: str, discovery: dict[str, Any], actor_i
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET namespace=excluded.namespace,description=excluded.description,
           primary_key=excluded.primary_key,warehouse_layer=excluded.warehouse_layer,
-          normalized_stage=excluded.normalized_stage,publish_status='draft',catalog_version=excluded.catalog_version,
+          normalized_stage=excluded.normalized_stage,
+          publish_status=CASE WHEN catalog_assets.publish_status='published' THEN 'published' ELSE 'draft' END,
+          catalog_version=excluded.catalog_version,
           source_updated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP""",
         (asset_id,source_id,namespace,name,name,"table",domain_id,warehouse_layer,normalized_stage,description,primary_key,"draft","draft",version))
         asset_ids[(namespace, name)] = asset_id
