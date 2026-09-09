@@ -59,6 +59,7 @@ from backend.memory_store import apply_memory_actions
 from backend.memory_vector_sync import synchronize_forgotten_memory_vectors
 from backend.memory_migrations import backfill_explicit_memories_once
 from backend.observability import configure_logging, finish_request, log_event, log_exception, start_request
+from backend.service_health import dependency_health
 from backend.provider_transport import client_options, normalize_connection
 from backend.schemas import ChatResponse
 from backend.tools.approvals import init_tool_runtime_schema
@@ -270,7 +271,17 @@ async def request_trace(request: Request, call_next):
 
 
 @app.get("/api/health")
-def health(): return {"status":"ok","runtime":"fastapi-langgraph"}
+def health(response: Response):
+    result = dependency_health()
+    if result["status"] != "ok":
+        response.status_code = 503
+    return result
+
+
+@app.get("/api/health/live")
+def liveness():
+    """A dependency-free process check for supervisors restarting the API itself."""
+    return {"status": "ok", "runtime": "fastapi-langgraph"}
 
 
 def public_user(user: dict) -> dict:

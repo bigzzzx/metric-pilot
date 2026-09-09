@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "vite",
     "api": ".\\.venv\\Scripts\\python.exe scripts/start_api.py",
+    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "health": ".\\.venv\\Scripts\\python.exe scripts/check_runtime.py",
+    "verify:postgres": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py",
     "build": "vite build",
     "test": "node --test"
   },

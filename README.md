@@ -28,7 +28,7 @@ npm run dev
 
 ## 接入 PostgreSQL 数据源
 
-本机开发时先运行 `scripts/start-milvus-tunnel.ps1`。该脚本除 Milvus、embedding 和 reranker 外，还会把服务器上的测试 PostgreSQL 映射到本机 `127.0.0.1:15433`。生产部署不依赖该隧道，应填写 PostgreSQL 的内网/VPC 地址。
+本机开发先在 `.env` 配置 `DATA_AGENT_SSH_SERVER` 和 `DATA_AGENT_SSH_KEY_PATH`，再运行 `npm run start:local`。它会按需启动前端、后端和 SSH 隧道守护进程；隧道断线后会指数退避并自动重连。`npm run health` 会同时检查 PostgreSQL、Milvus、embedding 和 reranker。也可在已设置这两个环境变量的终端单独运行 `scripts/start-milvus-tunnel.ps1`。该脚本会把服务器上的测试 PostgreSQL 映射到本机 `127.0.0.1:15433`。生产部署不依赖该隧道，应填写 PostgreSQL 的内网/VPC 地址。
 
 使用平台管理员账号登录后，进入“系统管理 → 数据源管理 → 添加数据源”，依次填写：
 
