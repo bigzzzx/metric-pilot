@@ -73,6 +73,19 @@ def test_create_list_and_open_conversation(storage):
     assert [item["sequence_no"] for item in detail["messages"]] == [1, 2]
 
 
+def test_successful_query_preserves_source_for_followup(storage):
+    conversations.create_conversation('user-a', 'pg-followup')
+    conversations.begin_turn('pg-followup', 'user-a', '订单多少行', 'pg-turn')
+    conversations.finish_turn('pg-followup', 'user-a', 'pg-turn', {
+        'answer':'1200行', 'intent':'DATA_QUERY', 'source_id':'remote-pg',
+        'sql':'SELECT count(*) FROM ods.orders', 'result':[{'n':1200}],
+        'tool_result':{'status':'success'},
+    })
+    history=conversations.history_for_agent('pg-followup','user-a')
+    assert len(history) == 2
+    assert 'remote-pg' in history[-1]['content'] and 'ods.orders' in history[-1]['content']
+
+
 def test_recent_conversations_are_ordered_by_terminal_update(storage):
     conversations.create_conversation("user-a", "older")
     conversations.create_conversation("user-a", "newer")

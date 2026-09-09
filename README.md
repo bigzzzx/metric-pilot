@@ -20,9 +20,9 @@ npm run api
 npm run dev
 ```
 
-打开 `http://localhost:5174`；FastAPI 默认运行在 `http://127.0.0.1:3001`。
+打开 `http://localhost:5174`；FastAPI 默认运行在 `http://127.0.0.1:18001`。
 
-新环境使用 `.env` 时可用 `.venv\\Scripts\\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 3001 --env-file .env` 启动后端。只有全新演示环境才运行 `scripts/seed_demo_warehouse.py`：它会重建 `.data/demo.db` 并重写演示元数据，已有数据时不要执行。`APP_ENCRYPTION_KEY` 必须是有效 Fernet 密钥，已有部署不得随意更换。
+新环境使用 `.env` 时可用 `.venv\\Scripts\\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 18001 --env-file .env` 启动后端。只有全新演示环境才运行 `scripts/seed_demo_warehouse.py`：它会重建 `.data/demo.db` 并重写演示元数据，已有数据时不要执行。`APP_ENCRYPTION_KEY` 必须是有效 Fernet 密钥，已有部署不得随意更换。
 
 独立回归测试：`.venv\\Scripts\\python.exe scripts/test_backend_isolated.py`（临时库、离线向量配置，不依赖个人 `.env`）。
 
@@ -95,7 +95,7 @@ npm run api
 | 上下文管理 | SQLite 会话、最近消息窗口、长会话摘要、显式跨会话长期记忆 |
 | 模型接入 | 可配置供应商、模型与智能体绑定，响应由 Pydantic 校验 |
 
-交互式 API 文档位于 `http://127.0.0.1:3001/docs`。
+交互式 API 文档位于 `http://127.0.0.1:18001/docs`。
 
 ## 测试
 

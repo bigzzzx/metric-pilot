@@ -92,12 +92,15 @@ def test_sync_preserves_reviewed_metadata_and_relationships(catalog):
     assert service.get_asset("admin", asset["id"])["publish_status"] == "published"
 
 
-def test_postgres_publication_never_routes_to_sqlite(catalog):
+def test_postgres_publication_never_routes_to_sqlite(catalog, monkeypatch):
+    from backend.data_sources import postgresql_query
+    calls = []
+    monkeypatch.setattr(postgresql_query, 'execute_postgres', lambda source, statement, limit: calls.append(source['id']) or [])
     review.save_review("asset-source-test", "admin", payload())
     publications.publish_asset("asset-source-test", "admin", 2)
-    assert not service.get_asset("admin", "asset-source-test")["can_query"]
-    with pytest.raises(LookupError):
-        service.sample_asset("admin", "asset-source-test")
+    assert service.get_asset("admin", "asset-source-test")["can_query"]
+    assert service.sample_asset("admin", "asset-source-test")['rows'] == []
+    assert calls == ['source-test']
     # Same physical name cannot overwrite the local orders allowlist.
     assert "order_id" in retrieval.authorized_query_schema("admin")["orders"]
 

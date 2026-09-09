@@ -459,7 +459,11 @@ def history_for_agent(
         if item["role"] == "user":
             history.append({"role": "user", "content": item["content"]})
         elif item["role"] == "assistant" and item["kind"] != "error":
-            history.append({"role": "assistant", "content": item["content"]})
+            content = item['content']
+            payload = item.get('payload') or {}
+            if isinstance(payload, dict) and payload.get('source_id') and payload.get('sql') and (payload.get('tool_result') or {}).get('status') == 'success':
+                content += '\n已执行查询上下文：' + _dump({'source_id': payload['source_id'], 'sql': payload['sql'][:2000]})
+            history.append({"role": "assistant", "content": content})
         elif item["role"] == "tool" and item["kind"] == "query_result":
             payload = item["payload"]
             result = payload.get("result", payload) if isinstance(payload, dict) else payload

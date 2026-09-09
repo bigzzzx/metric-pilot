@@ -604,11 +604,12 @@ def response_from_state(state: dict) -> ChatResponse:
     ]
     if sql:
         steps += [
-            {"name": "SQL guardrail", "detail": "Read-only and catalog allowlist passed"},
-            {"name": "Local Athena simulation", "detail": f"Returned {len(result)} rows"},
+            {"name": "SQL guardrail", "detail": "Query rejected or failed" if state.get('query_error') else "Read-only and catalog allowlist passed"},
+            {"name": "Data source query", "detail": f"Source: {plan.get('source_id') or 'catalog-resolved'}; returned {len(result)} rows"},
         ]
     return ChatResponse(
         answer=answer,
+        source_id=plan.get('source_id'),
         intent="DATA_QUERY" if sql else "CHAT",
         sql=sql,
         result=result,

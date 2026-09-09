@@ -22,7 +22,12 @@ def lookup_schema(payload: SchemaLookupInput, context) -> dict:
     con = db()
     try:
         for name in dict.fromkeys(payload.tables):
-            asset = con.execute("SELECT id,physical_name,data_grain FROM catalog_assets WHERE publish_status='published' AND (id=? OR physical_name=?)", (name, name)).fetchone()
+            candidates = con.execute("""SELECT a.*,s.kind AS dialect FROM catalog_assets a
+                JOIN data_sources s ON s.id=a.source_id WHERE a.publish_status='published' AND s.enabled=1
+                AND s.kind IN ('local-sqlite','postgresql')
+                AND (a.id=? OR a.physical_name=? OR a.namespace || '.' || a.physical_name=?)""", (name, name, name)).fetchall()
+            candidates = [a for a in candidates if all(can_access(context.user_id, action, asset_id=a['id'], connection=con) for action in (DISCOVER, QUERY_DATA))]
+            asset = candidates[0] if len(candidates) == 1 else None
             if not asset or not all(can_access(context.user_id, action, asset_id=asset["id"], connection=con)
                                     for action in (DISCOVER, QUERY_DATA)):
                 # Missing and unauthorized are intentionally indistinguishable.
@@ -30,6 +35,8 @@ def lookup_schema(payload: SchemaLookupInput, context) -> dict:
                 continue
             columns = con.execute("SELECT physical_name,data_type,description,semantic_role FROM catalog_columns WHERE asset_id=? AND sensitivity NOT IN ('sensitive','restricted') ORDER BY ordinal", (asset["id"],)).fetchall()
             table = {"asset_id": asset["id"], "name": asset["physical_name"],
+                     "source_id": asset["source_id"], "namespace": asset["namespace"],
+                     "dialect": "postgresql" if asset["dialect"] == "postgresql" else "sqlite",
                      "grain": str(asset["data_grain"] or "")[:150],
                      "columns": [{"name": c["physical_name"], "type": c["data_type"],
                                   "description": str(c["description"] or "")[:120], "role": c["semantic_role"]} for c in columns]}

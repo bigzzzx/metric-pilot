@@ -56,6 +56,7 @@ class MetricReference(ModelOutput):
 
 class QueryPlanOutput(AnswerOutput):
     sql: str | None = None
+    source_id: str | None = Field(default=None, max_length=200)
     schema_request: list[str] = Field(default_factory=list, max_length=3)
     metric_refs: list[MetricReference] = Field(default_factory=list, max_length=5)
     time_column: str | None = None
@@ -90,6 +91,7 @@ class AnalysisOutput(AnswerOutput):
 
 class ChatResponse(BaseModel):
     answer: str
+    source_id: str | None = None
     intent: Literal["CHAT", "DATA_QUERY"]
     sql: str = ""
     result: list[dict] = Field(default_factory=list)

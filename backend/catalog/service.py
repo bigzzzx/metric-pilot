@@ -57,8 +57,8 @@ def can_access(user_id: str, action: str, *, asset_id: str | None = None, domain
 
 def _asset_view(con: sqlite3.Connection, asset: sqlite3.Row, user_id: str) -> dict[str, Any]:
     result = dict(asset); result["aliases"] = _json(result.pop("aliases_json", "[]"), [])
-    # The current SQL executor only supports the built-in SQLite warehouse.
-    result["can_query"] = result["publish_status"] == "published" and result["source_id"] == "local-ecommerce-demo" and can_access(user_id, QUERY_DATA, asset_id=result["id"], connection=con)
+    source = con.execute("SELECT kind,enabled FROM data_sources WHERE id=?", (result['source_id'],)).fetchone()
+    result["can_query"] = bool(source and source['enabled'] and source['kind'] in {'local-sqlite','postgresql'} and result["publish_status"] == "published" and can_access(user_id, QUERY_DATA, asset_id=result["id"], connection=con))
     result["can_manage"] = can_access(user_id, MANAGE, connection=con)
     quality = con.execute("SELECT score,freshness_at,completeness,validity,status,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC LIMIT 1", (result["id"],)).fetchone()
     result["quality"] = dict(quality) if quality else None
@@ -129,16 +129,36 @@ def _mask(value: Any, sensitivity: str, strategy: str) -> Any:
 
 def sample_asset(user_id: str, asset_id: str, limit: int = 5) -> dict[str, Any]:
     limit = max(1,min(int(limit),5)); con = db(); asset = con.execute("SELECT * FROM catalog_assets WHERE id=? AND publish_status='published'", (asset_id,)).fetchone()
-    if not asset or asset["source_id"] != "local-ecommerce-demo" or not can_access(user_id,QUERY_DATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Sample data not authorized or source executor unavailable")
+    source_config = con.execute("SELECT * FROM data_sources WHERE id=? AND enabled=1", (asset['source_id'],)).fetchone() if asset else None
+    if not asset or not source_config or not can_access(user_id,QUERY_DATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Sample data not authorized or source unavailable")
     columns = _rows(con.execute("SELECT physical_name,sensitivity,masking_strategy FROM catalog_columns WHERE asset_id=? ORDER BY ordinal", (asset_id,))); con.close()
     names = [column["physical_name"] for column in columns]
     if not names: return {"rows": [],"columns": [],"limit": limit,"masked": True}
     quoted = ", ".join('"' + name.replace('"','""') + '"' for name in names); physical = '"' + asset["physical_name"].replace('"','""') + '"'
-    source = db(DEMO_DB)
-    try: rows = [dict(row) for row in source.execute(f"SELECT {quoted} FROM {physical} LIMIT ?", (limit,)).fetchall()]
-    finally: source.close()
+    if source_config['kind'] == 'postgresql':
+        from backend.data_sources.postgresql_query import execute_postgres
+        namespace = '"' + (asset['namespace'] or 'public').replace('"','""') + '"'
+        # Project masked literals on the server: sensitive values never leave PostgreSQL.
+        projected = []
+        for column in columns:
+            name = '"' + column['physical_name'].replace('"','""') + '"'
+            if column['sensitivity'] == 'restricted':
+                projected.append("'[受限]' AS " + name)
+            elif column['sensitivity'] == 'sensitive' or column['masking_strategy'] != 'none':
+                projected.append("'***' AS " + name)
+            else:
+                projected.append(name)
+        rows = execute_postgres(source_config, f"SELECT {', '.join(projected)} FROM {namespace}.{physical}", limit)
+    elif source_config['kind'] == 'local-sqlite':
+        source = db(DEMO_DB)
+        try: rows = [dict(row) for row in source.execute(f"SELECT {quoted} FROM {physical} LIMIT ?", (limit,)).fetchall()]
+        finally: source.close()
+    else:
+        raise LookupError('Source executor unavailable')
     for row in rows:
-        for column in columns: row[column["physical_name"]] = _mask(row.get(column["physical_name"]),column["sensitivity"],column["masking_strategy"])
+        for column in columns:
+            if source_config['kind'] != 'postgresql':
+                row[column["physical_name"]] = _mask(row.get(column["physical_name"]),column["sensitivity"],column["masking_strategy"])
     return {"rows":rows,"columns":names,"limit":limit,"masked":True,"notice":"仅展示最多 5 条经脱敏的样例数据；原始数据不会写入目录或发送给模型。"}
 
 

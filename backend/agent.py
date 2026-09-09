@@ -348,11 +348,14 @@ async def data_query_agent(state: AgentOverallState) -> AgentOverallState:
     metrics = await asyncio.to_thread(metric_context, question, state.get("rag", []), state.get("user_id", ""))
     examples = await asyncio.to_thread(retrieve_examples, question, state.get("user_id", ""))
     prompt = '''You are the Data Query Agent. Use only the supplied RAG evidence. Answer metadata questions directly;
-generate SQL only if data must be queried. SQL must be one SQLite SELECT/WITH statement.
+generate SQL only if data must be queried. Use the SQL dialect of the verified source (SQLite or PostgreSQL).
+SQL must be one SELECT/WITH statement against a single source. Return source_id from verified schema.
+PostgreSQL table names MUST include the verified namespace (schema.table).
+Never join across data sources. If the intended source is ambiguous, ask the user to clarify.
 If a requested asset is absent from supplied evidence, say it cannot be found within current permissions
 (当前权限范围内未找到可用数据资产). Never confirm it does not exist and never substitute an unrelated asset.
 Return JSON only:
-{"answer":"Chinese answer","sql":"optional SQL"}. RAG evidence:\n''' + evidence
+{"answer":"Chinese answer","sql":"optional SQL","source_id":"verified source id or null"}. RAG evidence:\n''' + evidence
     prompt += planning_instructions(metrics, examples)
     prompt += schema_instructions(schemas)
     plan = await complete_structured("data-query-agent", messages(state, prompt), QueryPlanOutput, state.get("model_id"))
@@ -364,6 +367,12 @@ Return JSON only:
         plan = await complete_structured("data-query-agent", messages(state, followup), QueryPlanOutput, state.get("model_id"))
     if plan.schema_request or (plan.sql and not schemas["tables"]):
         plan = QueryPlanOutput(answer="尚未核实所需的授权表结构。请确认数据表及字段，或检查 catalog_schema 工具绑定。", sql=None)
+    if plan.sql:
+        verified_sources = {table.get('source_id') for table in schemas['tables'] if table.get('source_id')}
+        if not plan.source_id and len(verified_sources) == 1:
+            plan.source_id = next(iter(verified_sources))
+        elif verified_sources and plan.source_id not in verified_sources:
+            plan = QueryPlanOutput(answer="请明确要查询的数据源；本次只能查询同一数据源内已核实的表。", sql=None)
     _log_node_duration("data_query", started_at, has_sql=bool(plan.sql))
     return {**state, "query_metrics": metrics, "plan": plan.model_dump(),
             **({"final": plan.model_dump()} if not plan.sql else {})}
@@ -379,7 +388,7 @@ def query_tool(state: AgentOverallState) -> AgentOverallState:
     if issue:
         return {**state, "sql": sql, "query_error": issue, "query_terminal": True}
     outcome = tool_executor.invoke(
-        "readonly_sql", {"sql": sql},
+        "readonly_sql", {"sql": sql, "source_id": state["plan"].get("source_id")},
         _tool_context(state, "readonly_sql", "data-query-agent"),
     )
     if outcome.status is ToolStatus.SUCCESS:
@@ -391,7 +400,7 @@ def query_tool(state: AgentOverallState) -> AgentOverallState:
     return {
         **state, "sql": sql, "query_error": error["message"],
         "repair_attempts": state.get("repair_attempts", 0),
-        "query_terminal": error["code"] in {"sql_schema_invalid", "permission_denied", "agent_tool_denied"},
+        "query_terminal": error["code"] in {"sql_schema_invalid", "permission_denied", "agent_tool_denied", "source_ambiguous", "cross_source_query", "source_unavailable", "query_timeout"},
         "tool_result": outcome.model_dump(mode="json"),
         **({"permission_error": error} if error["code"] in {"permission_denied", "agent_tool_denied"} else {}),
     }
@@ -436,7 +445,7 @@ def route_after_query(state: AgentOverallState) -> str:
 
 
 async def repair_sql(state: AgentOverallState) -> AgentOverallState:
-    prompt = f'''You are SQL Repair Agent. Fix the failed SQLite SQL using RAG context only. Error: {state["query_error"]}.
+    prompt = f'''You are SQL Repair Agent. Fix SQL using the original source dialect and RAG context only. Never switch data sources. Source id: {state.get("plan", {}).get("source_id")}. Error: {state["query_error"]}.
 Original SQL: {state["sql"]}. Return JSON only: {{"sql":"one corrected SELECT/WITH"}}.\nRAG:\n''' + prompt_context(state["message"], state.get("rag", []))
     repaired = await complete_structured("data-query-agent", messages(state, prompt), SQLRepairOutput, state.get("model_id"))
     return {**state, "plan": {**state.get("plan", {}), "sql": repaired.sql}, "repair_attempts": state.get("repair_attempts", 0) + 1, "query_error": ""}

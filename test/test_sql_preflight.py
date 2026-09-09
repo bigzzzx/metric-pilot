@@ -39,6 +39,11 @@ def test_existing_permission_checks_still_deny(tmp_path):
             assert caught.value.status_code == 403
 
 
+def test_sqlite_cte_resolves_base_tables(tmp_path):
+    with evaluation_environment(tmp_path):
+        assert sql_tool.run_readonly_sql('WITH x AS (SELECT order_id FROM orders) SELECT count(*) AS n FROM x', 'eval-analyst')[0]['n'] > 0
+
+
 def test_missing_field_stops_graph_without_sql_repair(tmp_path):
     from backend import agent
     with evaluation_environment(tmp_path):

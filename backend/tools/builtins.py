@@ -36,7 +36,7 @@ def _catalog_rag(payload: CatalogRagInput, context: ToolExecutionContext) -> dic
 
 def _readonly_sql(payload: ReadonlySqlInput, context: ToolExecutionContext) -> dict:
     try:
-        return {"rows": run_readonly_sql(payload.sql, context.user_id)}
+        return {"rows": run_readonly_sql(payload.sql, context.user_id, payload.source_id)}
     except HTTPException as exc:
         code = "permission_denied" if exc.status_code == 403 else getattr(exc, "code", "sql_error")
         raise ToolRuntimeError(code, str(exc.detail)) from exc

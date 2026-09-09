@@ -46,6 +46,10 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
         assets_by_id = {str(asset["id"]): asset for asset in assets}
         for asset in assets:
             asset_id = str(asset["id"])
+            source = con.execute("SELECT name,kind FROM data_sources WHERE id=?", (asset['source_id'],)).fetchone()
+            remote = asset['source_id'] != 'local-ecommerce-demo'
+            source_name = source['name'] if source else asset['source_id']
+            source_kind = source['kind'] if source else 'unknown'
             aliases = _json(asset["aliases_json"], [])
             columns = list(con.execute(
                 "SELECT * FROM catalog_columns WHERE asset_id=? ORDER BY ordinal", (asset_id,)
@@ -72,11 +76,12 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                 identifier=f"catalog:asset:{asset_id}", kind="table",
                 title=f"数据资产：{asset['display_name']}（{asset['physical_name']}）",
                 content=(f"数据资产：{asset['display_name']}。物理表：{asset['physical_name']}。"
+                         + (f"数据源：{source_name}。数据库类型：{source_kind}。数据源 ID：{asset['source_id']}。完整表名：{asset['namespace']}.{asset['physical_name']}。" if remote else '') +
                          f"业务域：{asset['domain_id']}。数仓层：{asset['warehouse_layer']}。"
                          f"标准层级：{asset['normalized_stage']}。描述：{asset['description']}。"
                          f"别名：{'、'.join(aliases) or '无'}。数据粒度：{asset['data_grain']}。"
                          f"主键：{asset['primary_key']}。可用于 Agent 的字段：\n" + "\n".join(field_lines)),
-                keywords=[asset["physical_name"], asset["display_name"], *aliases],
+                keywords=[asset["physical_name"], asset["display_name"], *aliases, *([source_name, source_kind, f"{asset['namespace']}.{asset['physical_name']}"] if remote else [])],
                 asset_ids=[asset_id], domain_id=asset["domain_id"],
             ))
 
