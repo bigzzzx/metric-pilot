@@ -5,6 +5,7 @@ from backend.catalog.rag_documents import authorized_catalog_documents
 from backend.catalog.vector_index import retrieve_catalog_vectors
 from backend.hybrid_retrieval import bm25_rank, reciprocal_rank_fusion, rerank_or_fallback, tokenize
 from backend.knowledge_base import retrieve as retrieve_knowledge
+from backend.query_fast_path import is_unambiguous_technical_query, qualified_table_names
 
 
 def requested_source_kind(query: str) -> str | None:
@@ -107,6 +108,62 @@ def _merge_required_evidence(ranked: list[dict], required: list[dict], limit: in
     return (required + remaining)[:limit]
 
 
+def _qualified_technical_evidence(query: str, documents: list[dict], limit: int) -> list[dict] | None:
+    """Resolve explicit physical tables locally before remote hybrid retrieval.
+
+    Returning an empty list is intentional when an explicitly named table is
+    outside the caller's authorized catalog; broader semantic matches must not
+    substitute another asset or reveal its existence.
+    """
+
+    if not is_unambiguous_technical_query(query):
+        return None
+    requested = qualified_table_names(query)
+
+    exact_tables: list[dict] = []
+    for item in documents:
+        if item.get("kind") != "table":
+            continue
+        searchable = " ".join([
+            str(item.get("title") or ""),
+            str(item.get("content") or ""),
+            " ".join(str(value) for value in item.get("keywords", [])),
+        ]).lower()
+        if any(table in searchable for table in requested):
+            exact_tables.append(item)
+    matched_names = {
+        table for table in requested
+        if any(
+            table in (
+                str(item.get("title") or "") + " " + str(item.get("content") or "")
+                + " " + " ".join(str(value) for value in item.get("keywords", []))
+            ).lower()
+            for item in exact_tables
+        )
+    }
+    if matched_names != requested:
+        return []
+
+    asset_ids = {
+        identifier
+        for item in exact_tables
+        for identifier in item.get("asset_ids", [])
+    }
+    related = [
+        item for item in documents
+        if item not in exact_tables
+        and asset_ids.intersection(item.get("asset_ids", []))
+        and (item.get("kind") != "relation" or _has_join_intent(query))
+    ]
+    ranked_related = bm25_rank(query, related, max(0, limit - len(exact_tables))) if related else []
+    ordered = [*exact_tables, *ranked_related]
+    seen: set[str] = set()
+    return [
+        item for item in ordered
+        if not (str(item.get("id")) in seen or seen.add(str(item.get("id"))))
+    ][:limit]
+
+
 def retrieve(query: str, limit: int = 8, fallback: bool = True, user_id: str | None = None) -> list[dict]:
     """Return only permission-scoped catalog metadata and knowledge chunks.
 
@@ -121,6 +178,9 @@ def retrieve(query: str, limit: int = 8, fallback: bool = True, user_id: str | N
         {**item, "kind": item.get("kind", "catalog"), "keywords": item.get("keywords", [])}
         for item in authorized
     ], source_kind)
+    qualified = _qualified_technical_evidence(query, normalized, limit)
+    if qualified is not None:
+        return qualified
     searchable = [
         {**item, "content": f"{item['title']} {' '.join(item.get('keywords', []))}\n{item['content']}"}
         for item in normalized

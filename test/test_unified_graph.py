@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from backend import agent
+from backend.query_fast_path import is_unambiguous_technical_query
 from backend.graph_runtime.events import streaming_answer
 from backend.schemas import AnswerOutput, AnalysisOutput, QueryPlanOutput, SQLRepairOutput
 from backend.tools.models import ToolResult, ToolStatus
@@ -125,3 +126,25 @@ def test_stream_failure_does_not_emit_success_done(monkeypatch):
         asyncio.run(run())
     assert not any(event["event"] == "done" for event in events)
     assert not streaming_answer.get()
+
+
+def test_simple_scalar_query_skips_second_model_analysis(monkeypatch):
+    async def fail(*_args, **_kwargs):
+        raise AssertionError("simple scalar result must not call the analysis model")
+
+    monkeypatch.setattr(agent, "complete_structured", fail)
+    state = asyncio.run(agent.data_analysis_agent({
+        "message": "ods.orders 一共有多少行？",
+        "history": [],
+        "sql": "SELECT COUNT(*) AS row_count FROM ods.orders",
+        "result": [{"row_count": 1200}],
+    }))
+    assert state["final"]["answer"] == "查询完成：共有 1200 条记录。"
+
+
+def test_qualified_table_read_uses_router_fast_path():
+    assert is_unambiguous_technical_query("查询 ods.orders 一共有多少行")
+    assert is_unambiguous_technical_query("直接汇总 ads.daily_trade 的原始物理字段 gmv")
+    assert not is_unambiguous_technical_query("删除 ods.orders 中的一条记录")
+    assert not is_unambiguous_technical_query("查询 ods.orders 的 GMV")
+    assert not is_unambiguous_technical_query("那 ods.orders 这个月呢")

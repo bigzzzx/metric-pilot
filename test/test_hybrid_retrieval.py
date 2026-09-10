@@ -91,3 +91,37 @@ def test_implicit_business_breakdown_keeps_relationship_evidence(monkeypatch):
     monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
     result = rag.retrieve("仅看 PAID 订单，按商品品类统计销售件数", limit=4, user_id="user")
     assert {item["id"] for item in result[:2]} == {"order-items", "item-product"}
+
+
+def test_qualified_technical_query_skips_remote_retrieval(monkeypatch):
+    documents = [
+        {"id": "orders", "kind": "table", "title": "ods.orders", "content": "订单表",
+         "keywords": [], "asset_ids": ["orders"], "source_kind": "postgresql"},
+        {"id": "customers", "kind": "table", "title": "ods.customers", "content": "客户表",
+         "keywords": [], "asset_ids": ["customers"], "source_kind": "postgresql"},
+    ]
+    monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
+    monkeypatch.setattr(
+        rag, "retrieve_catalog_vectors",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("dense retrieval should be skipped")),
+    )
+    monkeypatch.setattr(
+        rag, "retrieve_knowledge",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("knowledge retrieval should be skipped")),
+    )
+    result = rag.retrieve("查询 PostgreSQL 测试数仓 ods.orders 一共有多少行", user_id="user")
+    assert [item["id"] for item in result] == ["orders"]
+
+
+def test_qualified_business_metric_still_uses_hybrid_retrieval(monkeypatch):
+    documents = [
+        {"id": "orders", "kind": "table", "title": "ods.orders", "content": "订单表",
+         "keywords": [], "asset_ids": ["orders"], "source_kind": "postgresql"},
+    ]
+    calls = []
+    monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
+    monkeypatch.setattr(rag, "retrieve_catalog_vectors", lambda *_args: calls.append("dense") or documents)
+    monkeypatch.setattr(rag, "retrieve_knowledge", lambda *_args, **_kwargs: calls.append("knowledge") or [])
+    monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
+    rag.retrieve("查询 ods.orders 的 GMV", user_id="user")
+    assert calls == ["dense", "knowledge"]

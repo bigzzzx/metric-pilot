@@ -30,6 +30,7 @@ from backend.query_quality.evidence import metric_context, check_metric_referenc
 from backend.query_quality.examples import retrieve_examples
 from backend.query_quality.planner_context import candidate_tables, schema_instructions, compact_rag
 from backend.query_quality.sql_normalization import canonicalize_documented_enums
+from backend.query_fast_path import is_unambiguous_technical_query
 
 
 
@@ -86,7 +87,6 @@ _FAST_GENERAL_UTTERANCE = re.compile(
     re.IGNORECASE,
 )
 
-
 def is_unambiguous_social_message(message: str) -> bool:
     """Return true only for social messages that cannot need a data tool."""
 
@@ -114,6 +114,23 @@ async def router(state: AgentOverallState) -> AgentOverallState:
             "contextual_follow_up": False,
             "context_reference": "none",
             "requires_data_evidence": False,
+            "memory_actions": [],
+            "memory_retrieval": "none",
+            "memory_query": None,
+            "selected_skill_ids": [],
+            "skill_context": "",
+            "mcp_tool_call": None,
+        }
+
+    if is_unambiguous_technical_query(state["message"]):
+        _log_node_duration("router", started_at, route="data_query", route_source="fast_path")
+        return {
+            **state,
+            "route": "data_query",
+            "route_source": "fast_path",
+            "contextual_follow_up": False,
+            "context_reference": "none",
+            "requires_data_evidence": True,
             "memory_actions": [],
             "memory_retrieval": "none",
             "memory_query": None,
@@ -474,6 +491,9 @@ async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
     result = state.get("result", state.get("last_query_result")) or []
     # The current result is authoritative; do not append a previous result again.
     state = {**state, "last_query_result": result}
+    simple_answer = deterministic_query_answer(state, result)
+    if simple_answer:
+        return {**state, "result": result, "final": {"answer": simple_answer}}
     if streaming_answer.get():
         prompt = ("You are the Data Analysis Agent. Answer in Chinese using only the current trusted result "
                   "and RAG evidence. Never invent data or assert filters absent from the executed SQL.\n"
@@ -489,6 +509,46 @@ RAG evidence:\n''' + prompt_context(state["message"], state.get("rag", [])) + "\
     prompt += "\nExecuted SQL:\n" + str(state.get("sql") or "Previous query; SQL unavailable")
     final = await complete_structured("data-analysis-agent", messages(state, prompt, include_result=True), AnalysisOutput, state.get("model_id"))
     return {**state, "result": result, "final": final.model_dump()}
+
+
+def deterministic_query_answer(state: AgentOverallState, result: list[dict]) -> str | None:
+    """Render tiny scalar results without a second model call.
+
+    This is deliberately narrow: analytical, comparative and explanatory
+    questions continue to the Data Analysis model.
+    """
+
+    if not str(state.get("sql") or "").strip() or len(result) != 1:
+        return None
+    row = result[0]
+    if not isinstance(row, dict) or not 1 <= len(row) <= 4:
+        return None
+    if any(isinstance(value, (dict, list, tuple, set)) for value in row.values()):
+        return None
+    question = str(state.get("message") or "").lower()
+    analytical_markers = (
+        "分析", "解释", "原因", "为什么", "趋势", "对比", "比较", "建议",
+        "洞察", "异常", "同比", "环比", "分布",
+    )
+    if any(marker in question for marker in analytical_markers):
+        return None
+
+    def display(value) -> str:
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "是" if value else "否"
+        return str(value)
+
+    if len(row) == 1:
+        key, value = next(iter(row.items()))
+        if (
+            key.lower() in {"n", "count", "row_count", "total_rows", "total_count"}
+            and any(marker in question for marker in ("多少行", "几行", "多少条", "几条", "记录"))
+        ):
+            return f"查询完成：共有 {display(value)} 条记录。"
+    values = "，".join(f"{key} = {display(value)}" for key, value in row.items())
+    return f"查询完成：{values}。"
 
 
 async def etl_agent(state: AgentOverallState) -> AgentOverallState:
