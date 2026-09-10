@@ -41,6 +41,8 @@ npm run dev
 
 采集器会解析数据源注释中的 `业务域=...;分层=...;粒度=...`、字段业务别名和敏感级别。管理员可在“数据目录 → 数据资产”按状态和数据源筛选，逐表核对后使用批量发布；服务端会校验每张表的版本和完整度，只发布通过项，并在整批结束后统一刷新一次 RAG 索引。
 
+`npm run verify:postgres` 会对当前启用的 PostgreSQL 数据源运行 30 条固定黄金用例，覆盖指标、时间、Join、去重、数仓分层一致性、权限、停用数据源和结果行数限制，报告写入 `.data/evals/postgresql-latest.json`。`npm run evaluate:postgres` 还会选取 10 条代表性问题走完整 LangGraph 与当前配置模型，记录答案正确率、首 token 和总耗时。
+
 ## 启用 DeepSeek 对话 Agent
 
 项目根目录的 `.env` 仅保存在本机，且已被 Git 忽略。首次配置时可复制 `.env.example` 并填入自己的 Key：

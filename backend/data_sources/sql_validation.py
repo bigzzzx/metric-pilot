@@ -39,7 +39,11 @@ def validate_postgres(tree, tables, assets, con):
     for node in tree.walk():
         if isinstance(node, exp.Dot):
             raise QueryTargetError('permission_denied', '不允许调用自定义函数或读取复合字段。', 403)
-        if isinstance(node, exp.Func):
+        # SQLGlot models fixed binary operators (including AND, OR and
+        # arithmetic) as Func subclasses. They are grammar nodes rather than
+        # callable database functions, so only apply the function allow-list
+        # to actual calls and function-like expressions.
+        if isinstance(node, exp.Func) and not isinstance(node, exp.Binary):
             name = node.name.upper() if isinstance(node, exp.Anonymous) else node.sql_name()
             if name not in SAFE_FUNCTIONS | {'EXISTS'}:
                 raise QueryTargetError('permission_denied', '查询包含未批准的函数。', 403)
