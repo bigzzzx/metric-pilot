@@ -36,6 +36,9 @@ def test_catalog_rag_documents_apply_domain_acl_and_hide_sensitive_fields(tmp_pa
     assert analyst_documents
     assert all(item["domain_id"] == "domain-ecommerce" for item in analyst_documents)
     assert not any(item["id"] == "catalog:column:column-users-name" for item in all_documents)
+    orders = next(item for item in all_documents if item["id"] == "catalog:asset:asset-orders")
+    assert orders["source_id"] == "local-ecommerce-demo"
+    assert orders["source_kind"] == "local-sqlite"
 
 
 def test_dense_catalog_hits_are_filtered_before_they_leave_the_index(tmp_path, monkeypatch):

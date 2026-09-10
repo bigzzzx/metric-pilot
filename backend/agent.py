@@ -29,6 +29,7 @@ from backend.skills.repository import bound_skill_summaries, selected_skill_cont
 from backend.query_quality.evidence import metric_context, check_metric_references, planning_instructions, retrieval_question
 from backend.query_quality.examples import retrieve_examples
 from backend.query_quality.planner_context import candidate_tables, schema_instructions, compact_rag
+from backend.query_quality.sql_normalization import canonicalize_documented_enums
 
 
 
@@ -316,7 +317,7 @@ async def rag_retrieve(state: AgentOverallState) -> AgentOverallState:
     started_at = time.perf_counter()
     agent_id = _agent_for_route(state.get("route", "data_query"))
     result = tool_executor.invoke(
-        "catalog_rag", {"query": retrieval_question(state), "limit": 8},
+        "catalog_rag", {"query": retrieval_question(state), "limit": 12},
         _tool_context(state, "catalog_rag", agent_id),
     )
     if result.status is not ToolStatus.SUCCESS:
@@ -332,6 +333,7 @@ async def rag_retrieve(state: AgentOverallState) -> AgentOverallState:
 async def data_query_agent(state: AgentOverallState) -> AgentOverallState:
     started_at = time.perf_counter()
     schemas = {"tables": [], "unavailable": []}
+    question = retrieval_question(state)
     async def inspect_tables(tables):
         if not tables:
             return
@@ -342,9 +344,8 @@ async def data_query_agent(state: AgentOverallState) -> AgentOverallState:
             schemas["unavailable"] = outcome.data.get("unavailable", [])
         else:
             schemas["unavailable"] = [outcome.error.message if outcome.error else "表结构查询失败"]
-    await inspect_tables(candidate_tables(state.get("rag", [])))
+    await inspect_tables(candidate_tables(state.get("rag", []), question))
     evidence = prompt_context(state["message"], compact_rag(state.get("rag", []), schemas))
-    question = retrieval_question(state)
     metrics = await asyncio.to_thread(metric_context, question, state.get("rag", []), state.get("user_id", ""))
     examples = await asyncio.to_thread(retrieve_examples, question, state.get("user_id", ""))
     prompt = '''You are the Data Query Agent. Use only the supplied RAG evidence. Answer metadata questions directly;
@@ -368,6 +369,7 @@ Return JSON only:
     if plan.schema_request or (plan.sql and not schemas["tables"]):
         plan = QueryPlanOutput(answer="尚未核实所需的授权表结构。请确认数据表及字段，或检查 catalog_schema 工具绑定。", sql=None)
     if plan.sql:
+        plan.sql = canonicalize_documented_enums(plan.sql, schemas)
         verified_sources = {table.get('source_id') for table in schemas['tables'] if table.get('source_id')}
         if not plan.source_id and len(verified_sources) == 1:
             plan.source_id = next(iter(verified_sources))

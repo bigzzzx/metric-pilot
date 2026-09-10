@@ -1,5 +1,6 @@
 from backend.hybrid_retrieval import bm25_rank, reciprocal_rank_fusion, rerank_or_fallback
 from backend.knowledge_base import CHUNK_SIZE, split_text
+from backend import rag
 
 
 def test_structure_aware_chunking_is_bounded_and_overlapping():
@@ -30,3 +31,47 @@ def test_rerank_disabled_preserves_fusion_order(monkeypatch):
     monkeypatch.setenv("RERANK_BACKEND", "none")
     candidates = [{"id": "a", "content": "first"}, {"id": "b", "content": "second"}]
     assert [item["id"] for item in rerank_or_fallback("query", candidates, 2)] == ["a", "b"]
+
+
+def test_explicit_postgresql_query_excludes_local_asset_candidates(monkeypatch):
+    documents = [
+        {"id": "local", "title": "orders", "content": "local", "keywords": [], "asset_ids": ["local-orders"], "source_kind": "local-sqlite"},
+        {"id": "remote", "title": "orders", "content": "remote", "keywords": [], "asset_ids": ["pg-orders"], "source_kind": "postgresql"},
+        {"id": "metric", "title": "GMV", "content": "口径", "keywords": [], "asset_ids": [], "source_kind": None},
+    ]
+    monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
+    monkeypatch.setattr(rag, "retrieve_catalog_vectors", lambda *_args: documents)
+    monkeypatch.setattr(rag, "retrieve_knowledge", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
+    result = rag.retrieve("查询 PostgreSQL 订单", user_id="user")
+    assert "local" not in {item["id"] for item in result}
+    assert {"remote", "metric"} <= {item["id"] for item in result}
+
+
+def test_reranker_receives_more_than_the_old_fixed_ten_candidates(monkeypatch):
+    documents = [
+        {"id": str(index), "title": str(index), "content": "订单 商品", "keywords": [], "asset_ids": [], "source_kind": None}
+        for index in range(24)
+    ]
+    seen = []
+    monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
+    monkeypatch.setattr(rag, "retrieve_catalog_vectors", lambda *_args: documents)
+    monkeypatch.setattr(rag, "retrieve_knowledge", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: seen.extend(rows) or rows[:limit])
+    rag.retrieve("订单 商品", limit=12, user_id="user")
+    assert len(seen) >= 20
+
+
+def test_explicit_join_keeps_permission_scoped_relationship_evidence(monkeypatch):
+    documents = [
+        {"id": "orders", "kind": "table", "title": "订单", "content": "订单", "keywords": [], "asset_ids": ["orders"], "source_kind": "postgresql"},
+        {"id": "items", "kind": "table", "title": "订单明细", "content": "商品明细", "keywords": [], "asset_ids": ["items"], "source_kind": "postgresql"},
+        {"id": "products", "kind": "table", "title": "商品", "content": "商品品类", "keywords": [], "asset_ids": ["products"], "source_kind": "postgresql"},
+        {"id": "item-product", "kind": "relation", "title": "明细关联商品", "content": "订单明细关联商品品类", "keywords": ["关联"], "asset_ids": ["items", "products"], "source_kind": "postgresql"},
+    ]
+    monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
+    monkeypatch.setattr(rag, "retrieve_catalog_vectors", lambda *_args: documents[:2])
+    monkeypatch.setattr(rag, "retrieve_knowledge", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
+    result = rag.retrieve("PostgreSQL 关联订单明细和商品", limit=3, user_id="user")
+    assert result[0]["id"] == "item-product"

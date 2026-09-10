@@ -1,14 +1,51 @@
 """Assemble bounded verified schema context without another LLM routing pass."""
 import json
 
+from backend.hybrid_retrieval import tokenize
 
-def candidate_tables(rag):
-    ids = []
-    for item in rag:
-        for identifier in item.get("asset_ids", []):
-            if identifier not in ids:
-                ids.append(identifier)
-    return ids[:3]
+
+def candidate_tables(rag, question=""):
+    """Choose up to three relevant, preferably connected, catalog assets."""
+    query_terms = set(tokenize(question))
+    scores, first_seen = {}, {}
+    for rank, item in enumerate(rag, 1):
+        identifiers = item.get("asset_ids", [])
+        if not identifiers:
+            continue
+        document_terms = set(tokenize(f"{item.get('title', '')} {item.get('content', '')}"))
+        overlap = len(query_terms & document_terms)
+        kind_bonus = {"relation": 2.0, "table": 1.0, "column": 0.25}.get(item.get("kind"), 0.0)
+        for identifier in identifiers:
+            first_seen.setdefault(identifier, len(first_seen))
+            scores[identifier] = scores.get(identifier, 0.0) + overlap * 2.0 + kind_bonus + 1.0 / rank
+    ranked_ids = [identifier for identifier, _ in sorted(
+        scores.items(), key=lambda pair: (-pair[1], first_seen[pair[0]])
+    )]
+
+    lowered = str(question or "").lower()
+    join_intent = any(marker in lowered for marker in ("关联", "联表", "连接", " join ", "join到", "join 到"))
+    relations = [item for item in rag if item.get("kind") == "relation" and len(item.get("asset_ids", [])) >= 2]
+    if join_intent and relations:
+        def relation_score(item):
+            terms = set(tokenize(f"{item.get('title', '')} {item.get('content', '')}"))
+            return len(query_terms & terms)
+
+        ordered = sorted(enumerate(relations), key=lambda pair: (-relation_score(pair[1]), pair[0]))
+        selected = list(dict.fromkeys(ordered[0][1].get("asset_ids", [])))[:3]
+        while len(selected) < 3:
+            connected = [
+                (index, item) for index, item in ordered[1:]
+                if set(item.get("asset_ids", [])).intersection(selected)
+                and any(identifier not in selected for identifier in item.get("asset_ids", []))
+            ]
+            if not connected:
+                break
+            _, edge = connected[0]
+            selected.extend(identifier for identifier in edge.get("asset_ids", []) if identifier not in selected)
+            selected = selected[:3]
+        selected.extend(identifier for identifier in ranked_ids if identifier not in selected)
+        return selected[:3]
+    return ranked_ids[:3]
 
 
 def schema_instructions(schemas):

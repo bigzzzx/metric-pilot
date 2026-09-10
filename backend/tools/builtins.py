@@ -31,7 +31,7 @@ from backend.query_quality.schema_lookup import SchemaLookupInput, SchemaLookupO
 
 
 def _catalog_rag(payload: CatalogRagInput, context: ToolExecutionContext) -> dict:
-    return {"chunks": retrieve(payload.query, fallback=False, user_id=context.user_id)[: payload.limit]}
+    return {"chunks": retrieve(payload.query, limit=payload.limit, fallback=False, user_id=context.user_id)}
 
 
 def _readonly_sql(payload: ReadonlySqlInput, context: ToolExecutionContext) -> dict:

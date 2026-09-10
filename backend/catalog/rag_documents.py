@@ -20,7 +20,8 @@ def _json(value: str | None, fallback: Any) -> Any:
 
 def _document(*, identifier: str, kind: str, title: str, content: str,
               keywords: list[str], asset_ids: list[str] | None = None,
-              domain_id: str | None = None) -> dict[str, Any]:
+              domain_id: str | None = None, source_id: str | None = None,
+              source_kind: str | None = None) -> dict[str, Any]:
     return {
         "id": identifier,
         "kind": kind,
@@ -29,6 +30,8 @@ def _document(*, identifier: str, kind: str, title: str, content: str,
         "keywords": [keyword for keyword in keywords if keyword],
         "asset_ids": asset_ids or [],
         "domain_id": domain_id,
+        "source_id": source_id,
+        "source_kind": source_kind,
     }
 
 
@@ -71,6 +74,7 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                              f"别名：{'、'.join(column_aliases) or '无'}。"),
                     keywords=[asset["physical_name"], asset["display_name"], column["physical_name"], *column_aliases],
                     asset_ids=[asset_id], domain_id=asset["domain_id"],
+                    source_id=asset["source_id"], source_kind=source_kind,
                 ))
             documents.append(_document(
                 identifier=f"catalog:asset:{asset_id}", kind="table",
@@ -83,6 +87,7 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                          f"主键：{asset['primary_key']}。可用于 Agent 的字段：\n" + "\n".join(field_lines)),
                 keywords=[asset["physical_name"], asset["display_name"], *aliases, *([source_name, source_kind, f"{asset['namespace']}.{asset['physical_name']}"] if remote else [])],
                 asset_ids=[asset_id], domain_id=asset["domain_id"],
+                source_id=asset["source_id"], source_kind=source_kind,
             ))
 
         for relation in con.execute("SELECT * FROM catalog_relationships WHERE status='published' ORDER BY id"):
@@ -104,6 +109,9 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                          f"说明：{relation['description']}。已验证：{'是' if relation['verified'] else '否'}。"),
                 keywords=[left["physical_name"], relation["from_column"], right["physical_name"], relation["to_column"], "关联", "join"],
                 asset_ids=[str(left["id"]), str(right["id"])], domain_id=left["domain_id"],
+                source_id=left["source_id"] if left["source_id"] == right["source_id"] else None,
+                source_kind=(con.execute("SELECT kind FROM data_sources WHERE id=?", (left["source_id"],)).fetchone() or {"kind": None})["kind"]
+                if left["source_id"] == right["source_id"] else None,
             ))
 
         for metric in con.execute("SELECT * FROM catalog_metrics WHERE publish_status='published' ORDER BY id"):

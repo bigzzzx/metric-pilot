@@ -47,6 +47,11 @@ def test_metric_reference_cannot_cite_inaccessible_definition(isolated):
     assert evidence.check_metric_references(plan, [], "eval-analyst")
 
 
+def test_qualified_raw_columns_do_not_force_same_named_business_metric(isolated):
+    query = "汇总 ads.daily_trade 表中现有字段（物理列）：gmv 和 paid_order_count"
+    assert evidence.metric_context(query, [], "eval-analyst") == []
+
+
 def test_shipped_examples_are_verified_and_version_scoped(isolated):
     from backend.tools.sql_tool import run_readonly_sql
     golden = {case.id: case for case in CASES}

@@ -1,6 +1,7 @@
 """Bounded, permission-scoped business definitions for query planning."""
 import hashlib
 import json
+import re
 
 from backend.catalog.rag_documents import authorized_catalog_documents
 
@@ -24,6 +25,13 @@ def fingerprint(document: dict) -> str:
 
 def metric_context(query: str, rag: list[dict], user_id: str) -> list[dict]:
     if not user_id:
+        return []
+    # A qualified-table request for raw physical columns is intentionally not
+    # a semantic-metric request. This keeps governance strict for business
+    # questions while allowing engineers to audit or reconcile stored columns.
+    qualified_table = re.search(r"\b[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\b", query, re.IGNORECASE)
+    raw_column_intent = any(marker in query for marker in ("物理列", "原始字段", "表中现有字段"))
+    if qualified_table and raw_column_intent:
         return []
     retrieved_ids = {item.get("id") for item in rag if item.get("kind") == "metric"}
     metrics = []

@@ -3,6 +3,7 @@ import json
 
 from backend.evaluation.environment import evaluation_environment
 from backend.query_quality import schema_lookup
+from backend.query_quality.planner_context import candidate_tables
 from backend.tools.models import ToolExecutionContext
 
 
@@ -70,3 +71,16 @@ def test_repeated_schema_requests_stop_without_loop(tmp_path, monkeypatch):
         monkeypatch.setattr(agent, "complete_structured", complete)
         result = asyncio.run(agent.data_query_agent({"message": "订单数", "history": [], "user_id": "eval-analyst", "rag": []}))
         assert result["plan"]["sql"] is None and len(calls) == 2
+
+
+def test_candidate_tables_rank_question_terms_over_repeated_generic_hits():
+    rag = [
+        {"kind": "table", "title": "交易日报", "content": "订单 GMV 汇总", "asset_ids": ["daily"]},
+        {"kind": "column", "title": "订单金额", "content": "订单金额", "asset_ids": ["orders"]},
+        {"kind": "table", "title": "订单", "content": "订单状态 order_id", "asset_ids": ["orders"]},
+        {"kind": "table", "title": "订单明细", "content": "订单明细 商品 product_id 件数", "asset_ids": ["items"]},
+        {"kind": "relation", "title": "明细关联商品", "content": "订单明细关联商品，用商品品类分析", "asset_ids": ["items", "products"]},
+        {"kind": "relation", "title": "明细关联订单", "content": "订单明细关联订单，用订单状态分析", "asset_ids": ["items", "orders"]},
+    ]
+    selected = candidate_tables(rag, "关联订单明细和商品，按品类统计件数")
+    assert set(selected) == {"orders", "items", "products"}
