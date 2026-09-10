@@ -100,10 +100,15 @@ def _cleanup_legacy_local_sync_duplicates(con: sqlite3.Connection) -> None:
 
 
 def _seed_governance(con: sqlite3.Connection) -> None:
+    con.execute(
+        "INSERT OR IGNORE INTO catalog_domains(id,name,display_name,description,owner_group_id) VALUES (?,?,?,?,?)",
+        ("domain-supply-chain", "supply-chain", "供应链域", "商品、供应商、库存及履约相关数据资产。", "group-catalog-stewards"),
+    )
     for row in [
         ("group-ecommerce-analysts", "ecommerce-analysts", "电商数据分析组", "本地演示数据域的默认分析人员。"),
         ("group-catalog-stewards", "catalog-stewards", "数据目录管理员", "负责目录审核、发布与权限治理。"),
         ("group-marketing-analysts", "marketing-analysts", "营销数据分析组", "可访问营销业务域内的已授权数据资产。"),
+        ("group-supply-chain-analysts", "supply-chain-analysts", "供应链数据分析组", "可访问供应链业务域内的已授权数据资产。"),
     ]: con.execute("INSERT OR IGNORE INTO catalog_groups VALUES (?,?,?,?)", row)
     for row in [
         ("role-platform-admin", "platform-admin", "平台管理员", "可管理所有目录、权限、数据源与发布。"),
@@ -119,6 +124,9 @@ def _seed_governance(con: sqlite3.Connection) -> None:
         ("policy-marketing-discover", "group", "group-marketing-analysts", "domain", "domain-marketing", DISCOVER, "allow"),
         ("policy-marketing-metadata", "group", "group-marketing-analysts", "domain", "domain-marketing", VIEW_METADATA, "allow"),
         ("policy-marketing-query", "group", "group-marketing-analysts", "domain", "domain-marketing", QUERY_DATA, "allow"),
+        ("policy-supply-discover", "group", "group-supply-chain-analysts", "domain", "domain-supply-chain", DISCOVER, "allow"),
+        ("policy-supply-metadata", "group", "group-supply-chain-analysts", "domain", "domain-supply-chain", VIEW_METADATA, "allow"),
+        ("policy-supply-query", "group", "group-supply-chain-analysts", "domain", "domain-supply-chain", QUERY_DATA, "allow"),
         ("policy-analyst-discover", "group", "group-ecommerce-analysts", "domain", "domain-ecommerce", DISCOVER, "allow"),
         ("policy-analyst-metadata", "group", "group-ecommerce-analysts", "domain", "domain-ecommerce", VIEW_METADATA, "allow"),
         ("policy-analyst-query", "group", "group-ecommerce-analysts", "domain", "domain-ecommerce", QUERY_DATA, "allow"),

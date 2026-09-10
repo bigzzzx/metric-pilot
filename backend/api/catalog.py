@@ -1,13 +1,32 @@
 """Authenticated HTTP routes for the governed data catalog."""
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backend.auth import require_user
-from backend.catalog.publications import publish_asset, require_catalog_admin
+from backend.catalog.publications import publish_asset, publish_assets, require_catalog_admin
 from backend.catalog.retrieval import catalog_overview, lineage_for_asset
 from backend.catalog.service import get_asset, list_assets, list_domains, list_metrics, list_terms, sample_asset
 from backend.catalog.review import AssetReview, ReviewDecision, save_review, change_status
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
+
+
+class BatchPublishItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str = Field(min_length=1, max_length=128)
+    version: int = Field(ge=0)
+
+
+class BatchPublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[BatchPublishItem] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_assets(self):
+        ids = [item.asset_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("同一资产不能重复提交")
+        return self
 
 
 @router.get("/overview")
@@ -79,3 +98,8 @@ def publish_catalog_asset(asset_id: str, version: int | None = Query(default=Non
         return publish_asset(asset_id, user["id"], expected_version=version)
     except LookupError as exc:
         raise HTTPException(404, "Data asset not found") from exc
+
+
+@router.post("/admin/assets/batch-publish")
+def batch_publish_catalog_assets(payload: BatchPublishRequest, user: dict = Depends(require_user)):
+    return publish_assets([item.model_dump() for item in payload.items], user["id"])

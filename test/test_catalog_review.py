@@ -120,6 +120,47 @@ def test_http_contract_and_unauthorized_requests(catalog):
     assert client.post(url + "/withdraw", json={"version": 3, "reason": "测试撤回"}).status_code == 200
 
 
+def test_batch_publish_keeps_invalid_drafts_and_indexes_once(catalog, monkeypatch):
+    review.save_review("asset-source-test", "admin", payload())
+    connection = catalog()
+    connection.execute("""INSERT INTO catalog_assets(
+        id,source_id,namespace,physical_name,display_name,domain_id,description,publish_status,catalog_version
+    ) VALUES ('incomplete','source-test','ods','incomplete','缺少粒度','domain-ecommerce','说明','draft',1)""")
+    connection.execute("""INSERT INTO catalog_columns(
+        id,asset_id,physical_name,display_name,data_type,ordinal,description
+    ) VALUES ('incomplete-id','incomplete','id','ID','integer',1,'主键')""")
+    connection.commit(); connection.close()
+    calls = []
+    monkeypatch.setattr(vector_index, "ensure_catalog_index", lambda: calls.append(True) or True)
+
+    result = publications.publish_assets([
+        {"asset_id": "asset-source-test", "version": 2},
+        {"asset_id": "incomplete", "version": 1},
+    ], "admin")
+
+    assert result["published_count"] == 1
+    assert result["failed_count"] == 1
+    assert calls == [True]
+    connection = catalog()
+    assert connection.execute("SELECT publish_status FROM catalog_assets WHERE id='asset-source-test'").fetchone()[0] == "published"
+    assert connection.execute("SELECT publish_status FROM catalog_assets WHERE id='incomplete'").fetchone()[0] == "draft"
+    batch_id = result["batch_id"]
+    audit = connection.execute("SELECT detail_json FROM catalog_audit_logs WHERE entity_id='asset-source-test' AND action='publish'").fetchone()[0]
+    connection.close()
+    assert batch_id in audit
+
+
+def test_batch_publish_http_requires_admin_and_unique_assets(catalog):
+    app = FastAPI(); app.include_router(router)
+    app.dependency_overrides[require_user] = lambda: {"id": "analyst"}
+    client = TestClient(app)
+    body = {"items": [{"asset_id": "asset-source-test", "version": 1}]}
+    assert client.post("/api/catalog/admin/assets/batch-publish", json=body).status_code == 403
+    app.dependency_overrides[require_user] = lambda: {"id": "admin"}
+    duplicate = {"items": [body["items"][0], body["items"][0]]}
+    assert client.post("/api/catalog/admin/assets/batch-publish", json=duplicate).status_code == 422
+
+
 def test_relationship_only_published_with_both_endpoints(catalog):
     con = catalog()
     con.execute("""INSERT INTO catalog_relationships(id,from_asset_id,from_column,to_asset_id,to_column,

@@ -65,12 +65,26 @@ def main():
                 'dates': "SELECT date_trunc('month', order_time) AS month,count(*) AS n FROM ods.orders GROUP BY 1 ORDER BY 1",
                 'row_limit': 'SELECT order_id FROM ods.orders ORDER BY order_id',
                 'like_pattern': "SELECT count(*) AS n FROM ods.orders WHERE status LIKE 'PA%'",
+                'three_table_paid_gmv': """SELECT p.category, COUNT(DISTINCT o.order_id) AS order_count,
+                    SUM(oi.item_amount) AS item_gmv
+                    FROM ods.orders o
+                    JOIN ods.order_items oi ON oi.order_id=o.order_id
+                    JOIN ods.products p ON p.product_id=oi.product_id
+                    WHERE o.status='PAID'
+                    GROUP BY p.category ORDER BY p.category""",
             }
             for name, sql in cases.items():
                 rows = sql_tool.run_readonly_sql(sql, 'pg-check', 'pg-check-source')
                 if name == 'count': assert rows == [{'n':1200}], rows
                 if name == 'join': assert sum(row['n'] for row in rows) == 1200
                 if name == 'row_limit': assert len(rows) == 100
+                if name == 'three_table_paid_gmv':
+                    assert rows == [
+                        {'category':'家居','order_count':480,'item_gmv':'108000.00'},
+                        {'category':'数码','order_count':480,'item_gmv':'108000.00'},
+                        {'category':'服饰','order_count':480,'item_gmv':'120000.00'},
+                        {'category':'食品','order_count':480,'item_gmv':'120000.00'},
+                    ], rows
                 print(json.dumps({'check':name,'rows':len(rows),'sample':rows[:2]}, ensure_ascii=False))
             sample = service.sample_asset('pg-check', customers)
             assert len(sample['rows']) == 5

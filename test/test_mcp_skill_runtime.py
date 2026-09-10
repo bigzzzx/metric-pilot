@@ -37,7 +37,7 @@ def test_discovered_tools_default_enabled_and_use_annotations_for_risk(tmp_path)
     init_storage(factory)
     server = create_server(
         name="test", description="", transport="streamable-http",
-        endpoint="http://127.0.0.1:8765/mcp", auth_type="none", api_key="",
+        endpoint="http://127.0.0.1:18765/mcp", auth_type="none", api_key="",
         timeout_seconds=10, enabled=True, connection_factory=factory,
     )
 
@@ -174,10 +174,10 @@ def test_official_sdk_discovers_real_streamable_http_server(monkeypatch):
     script = Path(__file__).resolve().parents[1] / "scripts" / "test_mcp_server.py"
     process = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        _wait_port(8765)
+        _wait_port(18765)
         monkeypatch.setattr("backend.mcp.client.get_server", lambda *_args, **_kwargs: {
             "id": "server-test", "enabled": True, "transport": "streamable-http",
-            "endpoint": "http://127.0.0.1:8765/mcp", "auth_type": "none",
+            "endpoint": "http://127.0.0.1:18765/mcp", "auth_type": "none",
             "api_key": "", "timeout_seconds": 10,
         })
         result = asyncio.run(discover_server("server-test"))

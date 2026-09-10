@@ -5,7 +5,7 @@ from mcp.types import ToolAnnotations
 mcp = FastMCP(
     "Data Agent MCP Test Server",
     host="127.0.0.1",
-    port=8765,
+    port=18765,
     streamable_http_path="/mcp",
     json_response=True,
 )
@@ -31,4 +31,3 @@ def lookup_metric(name: str) -> dict:
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
-
