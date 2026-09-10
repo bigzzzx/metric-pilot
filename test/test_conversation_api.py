@@ -32,6 +32,10 @@ def test_conversation_api_restores_messages_and_uses_durable_terminal(tmp_path, 
                 "rag": [],
                 "sql": "",
                 "result": [],
+                "route": "data_query",
+                "route_source": "model",
+                "verified_schemas": {"tables": []},
+                "node_trace": [{"node": "router", "label": "正在理解问题", "duration_ms": 8.5, "status": "success"}],
             },
         }
 
@@ -74,6 +78,7 @@ def test_conversation_api_restores_messages_and_uses_durable_terminal(tmp_path, 
                 "assistant",
             ]
             assert restored["messages"][-1]["payload"]["answer"] == "已处理：保留这条对话"
+            assert restored["messages"][-1]["payload"]["trace"]["nodes"][0]["node"] == "router"
 
             conflict = client.post(
                 "/api/chat/stream",
@@ -98,5 +103,6 @@ def test_conversation_api_restores_messages_and_uses_durable_terminal(tmp_path, 
                 f"/api/conversations/{created['id']}/messages"
             ).json()
             assert restored_after_restart["messages"][-1]["payload"]["answer"] == "已处理：保留这条对话"
+            assert restored_after_restart["messages"][-1]["payload"]["trace"]["route"] == "data_query"
     finally:
         main.app.dependency_overrides.clear()

@@ -39,8 +39,9 @@ def build_graph(namespace: dict):
             status = "success"
             try:
                 if inspect.iscoroutinefunction(function):
-                    return await function(state)
-                return await asyncio.to_thread(function, state)
+                    result = await function(state)
+                else:
+                    result = await asyncio.to_thread(function, state)
             except BaseException as exc:
                 status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "error"
                 log_event("graph.node_failed", level=30, node=node, error_type=type(exc).__name__,
@@ -51,6 +52,10 @@ def build_graph(namespace: dict):
                 emit({"event": "node_completed", "node": node, "duration_ms": duration, "status": status})
                 log_event("graph.node_completed", node=node, duration_ms=duration, status=status)
                 model_node.reset(token)
+            trace = [*state.get("node_trace", []), {
+                "node": node, "label": label, "duration_ms": duration, "status": status,
+            }]
+            return {**result, "node_trace": trace}
         return execute
 
     for node, (function, label) in NODES.items():

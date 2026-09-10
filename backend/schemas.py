@@ -102,3 +102,4 @@ class ChatResponse(BaseModel):
     approval: dict | None = None
     permission_error: dict | None = None
     tool_result: dict | None = None
+    trace: dict | None = None

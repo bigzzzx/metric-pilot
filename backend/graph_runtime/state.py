@@ -33,6 +33,7 @@ class AgentOutputState(TypedDict, total=False):
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
+    node_trace: list[dict]
 
 
 class AgentOverallState(AgentInputState, AgentOutputState, total=False):

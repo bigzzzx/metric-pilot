@@ -61,6 +61,7 @@ from backend.memory_migrations import backfill_explicit_memories_once
 from backend.observability import configure_logging, finish_request, log_event, log_exception, start_request
 from backend.service_health import dependency_health
 from backend.provider_transport import client_options, normalize_connection
+from backend.query_trace import build_query_trace
 from backend.schemas import ChatResponse
 from backend.tools.approvals import init_tool_runtime_schema
 from backend.tools.registry import initialized_registry
@@ -630,6 +631,7 @@ def response_from_state(state: dict) -> ChatResponse:
         approval=state.get("approval"),
         permission_error=state.get("permission_error"),
         tool_result=state.get("tool_result"),
+        trace=build_query_trace(state),
     )
 
 

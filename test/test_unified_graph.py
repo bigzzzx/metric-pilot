@@ -72,6 +72,8 @@ def test_both_entry_points_execute_same_nodes_and_business_outcome(monkeypatch, 
     assert streamed.get("sql") == normal.get("sql")
     assert streamed.get("result") == normal.get("result")
     assert streamed["final"]["answer"] == normal["final"]["answer"]
+    assert [item["node"] for item in streamed["node_trace"]] == [item["node"] for item in normal["node_trace"]]
+    assert streamed["node_trace"][0]["node"] == "router"
     if scenario in {"write", "etl", "mcp"}:
         assert sum(item["event"] == "approval_required" for item in events) == 1
     if scenario in {"query", "repair"}:

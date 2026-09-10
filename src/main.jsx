@@ -8,6 +8,7 @@ import ManagedMcpPanel from './pages/extensions/McpPanel.jsx';
 import ManagedSkillsPanel from './pages/extensions/SkillsPanel.jsx';
 import ToolApprovalCard, { PermissionDeniedCard } from './components/chat/ToolApprovalCard.jsx';
 import MessageText from './components/chat/MessageText.jsx';
+import QueryTraceDetails from './components/chat/QueryTraceDetails.jsx';
 import './styles.css';
 
 const nav = [
@@ -27,6 +28,7 @@ function AssistantAnswer({ data }) {
     {!data.approval && (data.answer ? <MessageText>{data.answer}</MessageText> : <p className="stream-status">{data.status || '正在处理中…'}</p>)}
     {data.sql && <details><summary>查看 SQL</summary><pre>{data.sql}</pre></details>}
     {columns.length > 0 && <div className="table-wrap"><table><thead><tr>{columns.map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map(x => <td key={x}>{row[x]}</td>)}</tr>)}</tbody></table></div>}
+    {data.trace && <QueryTraceDetails trace={data.trace} />}
   </article>;
 }
 
