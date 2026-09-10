@@ -75,3 +75,19 @@ def test_explicit_join_keeps_permission_scoped_relationship_evidence(monkeypatch
     monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
     result = rag.retrieve("PostgreSQL 关联订单明细和商品", limit=3, user_id="user")
     assert result[0]["id"] == "item-product"
+
+
+def test_implicit_business_breakdown_keeps_relationship_evidence(monkeypatch):
+    documents = [
+        {"id": "orders", "kind": "table", "title": "订单", "content": "PAID 订单", "keywords": [], "asset_ids": ["orders"], "source_kind": "postgresql"},
+        {"id": "items", "kind": "table", "title": "订单明细", "content": "销售件数", "keywords": [], "asset_ids": ["items"], "source_kind": "postgresql"},
+        {"id": "products", "kind": "table", "title": "商品", "content": "商品品类", "keywords": [], "asset_ids": ["products"], "source_kind": "postgresql"},
+        {"id": "order-items", "kind": "relation", "title": "订单关联明细", "content": "订单关联明细", "keywords": ["关联"], "asset_ids": ["orders", "items"], "source_kind": "postgresql"},
+        {"id": "item-product", "kind": "relation", "title": "明细关联商品", "content": "明细关联商品品类", "keywords": ["关联"], "asset_ids": ["items", "products"], "source_kind": "postgresql"},
+    ]
+    monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
+    monkeypatch.setattr(rag, "retrieve_catalog_vectors", lambda *_args: documents[:2])
+    monkeypatch.setattr(rag, "retrieve_knowledge", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
+    result = rag.retrieve("仅看 PAID 订单，按商品品类统计销售件数", limit=4, user_id="user")
+    assert {item["id"] for item in result[:2]} == {"order-items", "item-product"}

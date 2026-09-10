@@ -9,6 +9,7 @@
     "health": ".\\.venv\\Scripts\\python.exe scripts/check_runtime.py",
     "verify:postgres": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py",
     "evaluate:postgres": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py --llm",
+    "evaluate:postgres:stability": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py --stability --output .data/evals/postgresql-stability-latest.json",
     "build": "vite build",
     "test": "node --test"
   },

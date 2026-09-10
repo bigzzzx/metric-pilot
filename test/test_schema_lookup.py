@@ -61,6 +61,23 @@ def test_model_can_request_schema_once_before_sql(tmp_path, monkeypatch):
         assert result["plan"]["sql"] and len(prompts) == 2
 
 
+def test_schema_request_merges_with_initially_verified_tables(tmp_path, monkeypatch):
+    from backend import agent
+    calls = []
+    async def complete(_id, messages, schema, _model):
+        calls.append(messages)
+        if len(calls) == 1:
+            return schema(answer="补查用户", schema_request=["users"])
+        return schema(answer="查询", sql="SELECT COUNT(*) FROM orders JOIN users ON orders.user_id=users.user_id")
+    rag = [{"kind": "table", "title": "订单", "content": "orders", "asset_ids": ["orders"]}]
+    with evaluation_environment(tmp_path):
+        monkeypatch.setattr(agent, "complete_structured", complete)
+        result = asyncio.run(agent.data_query_agent({
+            "message": "订单关联用户", "history": [], "user_id": "eval-analyst", "rag": rag,
+        }))
+        assert {table["name"] for table in result["verified_schemas"]["tables"]} == {"orders", "users"}
+
+
 def test_repeated_schema_requests_stop_without_loop(tmp_path, monkeypatch):
     from backend import agent
     calls = []

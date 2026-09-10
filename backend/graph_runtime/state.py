@@ -29,6 +29,10 @@ class AgentOutputState(TypedDict, total=False):
     approval: dict
     permission_error: dict
     tool_result: dict
+    verified_schemas: dict
+    route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
+    route_source: Literal["model", "fast_path"]
+    contextual_follow_up: bool
 
 
 class AgentOverallState(AgentInputState, AgentOutputState, total=False):

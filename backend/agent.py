@@ -340,10 +340,27 @@ async def data_query_agent(state: AgentOverallState) -> AgentOverallState:
         outcome = await asyncio.to_thread(tool_executor.invoke, "catalog_schema", {"tables": tables},
                                          _tool_context(state, "catalog_schema", "data-query-agent"))
         if outcome.status is ToolStatus.SUCCESS:
-            schemas["tables"] = outcome.data.get("tables", [])
-            schemas["unavailable"] = outcome.data.get("unavailable", [])
+            merged = {
+                (table.get("asset_id") or (
+                    table.get("source_id"), table.get("namespace"),
+                    table.get("physical_name") or table.get("name")
+                )): table
+                for table in schemas["tables"]
+            }
+            for table in outcome.data.get("tables", []):
+                key = table.get("asset_id") or (
+                    table.get("source_id"), table.get("namespace"),
+                    table.get("physical_name") or table.get("name")
+                )
+                merged[key] = table
+            schemas["tables"] = list(merged.values())
+            schemas["unavailable"] = list(dict.fromkeys([
+                *schemas["unavailable"], *outcome.data.get("unavailable", [])
+            ]))
         else:
-            schemas["unavailable"] = [outcome.error.message if outcome.error else "表结构查询失败"]
+            schemas["unavailable"] = list(dict.fromkeys([
+                *schemas["unavailable"], outcome.error.message if outcome.error else "表结构查询失败"
+            ]))
     await inspect_tables(candidate_tables(state.get("rag", []), question))
     evidence = prompt_context(state["message"], compact_rag(state.get("rag", []), schemas))
     metrics = await asyncio.to_thread(metric_context, question, state.get("rag", []), state.get("user_id", ""))
@@ -376,7 +393,7 @@ Return JSON only:
         elif verified_sources and plan.source_id not in verified_sources:
             plan = QueryPlanOutput(answer="请明确要查询的数据源；本次只能查询同一数据源内已核实的表。", sql=None)
     _log_node_duration("data_query", started_at, has_sql=bool(plan.sql))
-    return {**state, "query_metrics": metrics, "plan": plan.model_dump(),
+    return {**state, "query_metrics": metrics, "verified_schemas": schemas, "plan": plan.model_dump(),
             **({"final": plan.model_dump()} if not plan.sql else {})}
 
 

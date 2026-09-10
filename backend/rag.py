@@ -24,7 +24,14 @@ def source_scoped(documents: list[dict], source_kind: str | None) -> list[dict]:
 
 def _has_join_intent(query: str) -> bool:
     lowered = str(query or "").lower()
-    return any(marker in lowered for marker in ("关联", "联表", "连接", " join ", "join到", "join 到"))
+    if any(marker in lowered for marker in ("关联", "联表", "连接", " join ", "join到", "join 到")):
+        return True
+    # Natural business questions often imply a join without saying “关联”.
+    product_breakdown = any(marker in lowered for marker in ("商品品类", "按品类", "类目")) \
+        and any(marker in lowered for marker in ("订单", "明细", "销售", "paid"))
+    customer_breakdown = any(marker in lowered for marker in ("区域", "大区", "城市")) \
+        and any(marker in lowered for marker in ("订单", "成交", "paid"))
+    return product_breakdown or customer_breakdown
 
 
 def _relation_evidence(query: str, documents: list[dict], ranked: list[dict], limit: int) -> list[dict]:

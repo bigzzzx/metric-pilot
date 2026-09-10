@@ -23,7 +23,12 @@ def candidate_tables(rag, question=""):
     )]
 
     lowered = str(question or "").lower()
-    join_intent = any(marker in lowered for marker in ("关联", "联表", "连接", " join ", "join到", "join 到"))
+    explicit_join = any(marker in lowered for marker in ("关联", "联表", "连接", " join ", "join到", "join 到"))
+    product_breakdown = any(marker in lowered for marker in ("商品品类", "按品类", "类目")) \
+        and any(marker in lowered for marker in ("订单", "明细", "销售", "paid"))
+    customer_breakdown = any(marker in lowered for marker in ("区域", "大区", "城市")) \
+        and any(marker in lowered for marker in ("订单", "成交", "paid"))
+    join_intent = explicit_join or product_breakdown or customer_breakdown
     relations = [item for item in rag if item.get("kind") == "relation" and len(item.get("asset_ids", [])) >= 2]
     if join_intent and relations:
         def relation_score(item):
