@@ -31,6 +31,13 @@ def _json(value: str | None, fallback: Any) -> Any:
         return fallback
 
 
+def _ensure_column(con: sqlite3.Connection, table: str, name: str, declaration: str) -> None:
+    """Apply a small idempotent SQLite column migration."""
+    columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
+    if name not in columns:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
 def init_catalog_schema(connection_factory=None) -> None:
     """Create catalog storage and import the local demo as published data."""
     connection_factory = connection_factory or db
@@ -54,6 +61,12 @@ def init_catalog_schema(connection_factory=None) -> None:
       id TEXT PRIMARY KEY,term TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,domain_id TEXT,definition TEXT NOT NULL,aliases_json TEXT NOT NULL DEFAULT '[]',owner_group_id TEXT,sensitivity TEXT NOT NULL DEFAULT 'public',publish_status TEXT NOT NULL DEFAULT 'draft',catalog_version INTEGER NOT NULL DEFAULT 1,published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS catalog_quality_snapshots(
       id TEXT PRIMARY KEY,asset_id TEXT NOT NULL,score REAL NOT NULL,freshness_at TEXT,completeness REAL,validity REAL,status TEXT NOT NULL DEFAULT 'unknown',details_json TEXT NOT NULL DEFAULT '{}',observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS catalog_quality_runs(
+      id TEXT PRIMARY KEY,source_id TEXT NOT NULL,actor_id TEXT,status TEXT NOT NULL DEFAULT 'running',
+      asset_count INTEGER NOT NULL DEFAULT 0,healthy_count INTEGER NOT NULL DEFAULT 0,
+      warning_count INTEGER NOT NULL DEFAULT 0,critical_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,summary_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);
     CREATE TABLE IF NOT EXISTS catalog_groups(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS catalog_group_memberships(group_id TEXT NOT NULL,user_id TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(group_id,user_id));
     CREATE TABLE IF NOT EXISTS catalog_roles(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '');
@@ -88,7 +101,11 @@ def init_catalog_schema(connection_factory=None) -> None:
     CREATE INDEX IF NOT EXISTS idx_catalog_policy_subject ON catalog_policies(subject_type,subject_id,action);
     CREATE INDEX IF NOT EXISTS idx_catalog_sync_runs_source ON catalog_sync_runs(source_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_catalog_sync_changes_source ON catalog_sync_changes(source_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_catalog_quality_runs_source ON catalog_quality_runs(source_id,created_at DESC);
     """)
+    _ensure_column(con, "catalog_quality_snapshots", "run_id", "TEXT")
+    _ensure_column(con, "catalog_quality_snapshots", "row_count", "INTEGER NOT NULL DEFAULT 0")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_catalog_quality_snapshots_run ON catalog_quality_snapshots(run_id)")
     _seed_governance(con)
     _seed_demo_catalog(con)
     _bootstrap_existing_users(con)

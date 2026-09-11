@@ -1,0 +1,13 @@
+.quality-run-panel { margin-top: 18px; border: 1px solid #e1e6ec; border-radius: 10px; padding: 16px; }
+.quality-run-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.quality-run-heading h3 { margin: 0; font-size: 14px; }
+.quality-run-heading button { white-space: nowrap; }
+.quality-run-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.quality-run-summary b,.quality-run-summary span { border-radius: 5px; background: #f3f6fa; padding: 5px 8px; font-size: 10px; }
+.quality-run-summary .healthy { color: #34704d; background: #eef8f1; }
+.quality-run-summary .warning { color: #8b5c16; background: #fff6e4; }
+.quality-run-summary .critical { color: #a33e38; background: #fff0ef; }
+.quality-run-summary time { margin-left: auto; color: #8b949f; font-size: 10px; }
+.quality-run-history { margin-top: 13px; color: #66717f; font-size: 11px; }
+.quality-run-history p { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #edf0f3; padding-top: 7px; }
+@media(max-width:700px) { .quality-run-heading { display: block; } .quality-run-heading button { margin-top: 10px; } .quality-run-summary time { width: 100%; margin-left: 0; } }

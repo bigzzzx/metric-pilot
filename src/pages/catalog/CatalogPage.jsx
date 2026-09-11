@@ -18,6 +18,22 @@ async function fetchJson(url) {
 
 function Tags({ values = [] }) { return <span className="catalog-tags">{values.map(value => <i key={value}>{label(value)}</i>)}</span>; }
 
+const percent = value => `${Math.round((value ?? 0) * 100)}%`;
+
+function QualitySnapshot({ item }) {
+  const details = item.details || {};
+  const nullColumns = (details.column_null_rates || []).filter(value => value.null_count > 0).slice(0, 5);
+  return <article className={`quality-snapshot ${item.status}`}>
+    <b>{percent(item.score)}</b>
+    <div><strong>{label(item.status)} · {item.row_count ?? 0} 行</strong><span>完整性 {percent(item.completeness)} · 主键有效性 {percent(item.validity)}</span>
+      <small>主键空值 {details.primary_key_null_rows || 0} · 重复 {details.primary_key_duplicate_rows || 0}{details.freshness_column ? ` · 新鲜度字段 ${details.freshness_column}` : ' · 未识别新鲜度字段'}</small>
+      {item.freshness_at && <small>最新时间 {item.freshness_at}{details.freshness_age_days !== null && details.freshness_age_days !== undefined ? ` · 距今 ${details.freshness_age_days} 天` : ''}</small>}
+      {nullColumns.length > 0 && <small>存在空值：{nullColumns.map(value => `${value.column} ${percent(value.null_rate)}`).join('、')}</small>}
+    </div>
+    <time>{item.observed_at}</time>
+  </article>;
+}
+
 function AssetDetail({ assetId, onClose, domains, onCatalogChanged }) {
   const [asset, setAsset] = useState(null), [sample, setSample] = useState(null), [lineage, setLineage] = useState(null), [tab, setTab] = useState('overview'), [error, setError] = useState('');
   useEffect(() => { let live = true; setAsset(null); setSample(null); setLineage(null); setError(''); fetchJson(`/api/catalog/assets/${assetId}`).then(data => { if (live) { setAsset(data); setTab(data.can_manage && data.publish_status !== 'published' ? 'review' : 'overview'); } }).catch(err => live && setError(err.message)); return () => { live = false; }; }, [assetId]);
@@ -32,7 +48,7 @@ function AssetDetail({ assetId, onClose, domains, onCatalogChanged }) {
   if (asset.can_manage) detailTabs.push(['review', asset.publish_status === 'published' ? '发布管理' : '审核编辑']);
   return <section className="catalog-detail">
     <button className="text-button" onClick={onClose}>← 返回资产列表</button>
-    <div className="asset-detail-heading"><div><div className="asset-eyebrow">{asset.asset_type} · {asset.physical_name}</div><h2>{asset.display_name}</h2><p>{asset.description}</p><Tags values={[asset.warehouse_layer, asset.normalized_stage, asset.sensitivity, asset.certification_status]} /></div><div className="asset-quality"><b>{asset.quality?.score ? `${Math.round(asset.quality.score * 100)}%` : '—'}</b><span>质量评分 · {asset.quality?.status || '未检测'}</span></div></div>
+    <div className="asset-detail-heading"><div><div className="asset-eyebrow">{asset.asset_type} · {asset.physical_name}</div><h2>{asset.display_name}</h2><p>{asset.description}</p><Tags values={[asset.warehouse_layer, asset.normalized_stage, asset.sensitivity, asset.certification_status]} /></div><div className="asset-quality"><b>{asset.quality?.score !== undefined && asset.quality?.score !== null ? percent(asset.quality.score) : '—'}</b><span>质量评分 · {asset.quality?.status || '未检测'}</span></div></div>
     {reviewMessage && <p role="status" className="sample-notice">{reviewMessage}</p>}
     <div className="catalog-tabs detail-tabs">{detailTabs.map(([id,name]) => <button key={id} className={tab===id?'active':''} onClick={() => setTab(id)}>{name}</button>)}</div>
     {tab === 'review' && asset.can_manage && <AssetReviewPanel key={`${asset.id}:${asset.catalog_version}`} asset={asset} domains={domains} onUpdated={refreshReview} />}
@@ -42,7 +58,7 @@ function AssetDetail({ assetId, onClose, domains, onCatalogChanged }) {
     {tab === 'relations' && <div className="relation-list">{asset.relationships.filter(item => item.visible).length ? asset.relationships.filter(item => item.visible).map(item => <article key={item.id}><b>{item.from_asset?.physical_name}.{item.from_column}</b><span> {item.recommended_join} · {item.cardinality} → </span><b>{item.to_asset?.physical_name}.{item.to_column}</b><p>{item.description}</p></article>) : <p className="page-subtitle">当前资产没有已发布的表关联。</p>}</div>}
     {tab === 'lineage' && <div>{!lineage ? <p className="page-subtitle">正在加载有向血缘…</p> : <LineageGraph data={lineage} />}</div>}
     {tab === 'metrics' && <div className="metric-grid">{asset.metrics.map(metric => <article key={metric.id}><b>{metric.display_name}</b><p>{metric.description}</p><code>{metric.formula}</code><Tags values={[metric.certification_status]} /></article>)}</div>}
-    {tab === 'quality' && <div className="quality-list">{asset.quality_history.map(item => <article key={item.observed_at}><b>{Math.round(item.score * 100)}%</b><span>{item.status} · 完整性 {Math.round((item.completeness || 0) * 100)}% · 有效性 {Math.round((item.validity || 0) * 100)}%</span><small>{item.observed_at}</small></article>)}</div>}
+    {tab === 'quality' && <div className="quality-list">{asset.quality_history.length ? asset.quality_history.map(item => <QualitySnapshot key={item.run_id || item.observed_at} item={item} />) : <p className="page-subtitle">尚未执行真实质量检测。</p>}</div>}
   </section>;
 }
 

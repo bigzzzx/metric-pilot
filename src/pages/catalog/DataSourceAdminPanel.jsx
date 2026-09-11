@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import MetadataChangeReview from './MetadataChangeReview.jsx';
+import DataQualityPanel from './DataQualityPanel.jsx';
 import './DataSourceAdminPanel.css';
 
 const SOURCE_KINDS = [
@@ -110,5 +111,6 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
     </div>
     {notice && <p className="save-notice catalog-notice" role="status">{notice}</p>}
     {draft?.id && <MetadataChangeReview key={draft.id} sourceId={draft.id} onCatalogChanged={onCatalogChanged} />}
+    {draft?.id && draft.kind === 'postgresql' && <DataQualityPanel sourceId={draft.id} enabled={draft.enabled} onCatalogChanged={onCatalogChanged} />}
   </section>;
 }

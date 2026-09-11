@@ -102,6 +102,7 @@ def delete_source(source_id: str, actor_id: str) -> dict:
         connection.execute("DELETE FROM catalog_sync_snapshots WHERE source_id=?", (source_id,))
         connection.execute("DELETE FROM catalog_sync_runs WHERE source_id=?", (source_id,))
         connection.execute("DELETE FROM catalog_technical_state WHERE source_id=?", (source_id,))
+        connection.execute("DELETE FROM catalog_quality_runs WHERE source_id=?", (source_id,))
         connection.execute("DELETE FROM data_sources WHERE id=?", (source_id,))
         connection.execute(
             "INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json) VALUES (?,?,?,?,?)",

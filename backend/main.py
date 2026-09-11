@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.agent import run_agent, run_agent_stream
-from backend.api import admin_router, catalog_router, knowledge_router, metadata_sync_router, tools_router
+from backend.api import admin_router, catalog_router, knowledge_router, metadata_sync_router, quality_router, tools_router
 from backend.catalog import init_catalog_schema
 from backend.catalog.repository import provision_user_access
 from backend.catalog.publications import require_catalog_admin, require_platform_admin
@@ -249,6 +249,7 @@ app.include_router(catalog_router)
 app.include_router(admin_router)
 app.include_router(tools_router)
 app.include_router(metadata_sync_router)
+app.include_router(quality_router)
 
 
 @app.exception_handler(Exception)

@@ -22,6 +22,14 @@ def _json(value: str | None, fallback: Any) -> Any:
     except json.JSONDecodeError: return fallback
 
 
+def _quality_view(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    result = dict(row)
+    result["details"] = _json(result.pop("details_json", "{}"), {})
+    return result
+
+
 def _subjects(con: sqlite3.Connection, user_id: str) -> list[tuple[str, str]]:
     groups = [("group", row["group_id"]) for row in con.execute("SELECT group_id FROM catalog_group_memberships WHERE user_id=?", (user_id,))]
     roles = [("role", row["role_id"]) for row in con.execute("SELECT role_id FROM catalog_user_roles WHERE user_id=?", (user_id,))]
@@ -60,8 +68,8 @@ def _asset_view(con: sqlite3.Connection, asset: sqlite3.Row, user_id: str) -> di
     source = con.execute("SELECT kind,enabled FROM data_sources WHERE id=?", (result['source_id'],)).fetchone()
     result["can_query"] = bool(source and source['enabled'] and source['kind'] in {'local-sqlite','postgresql'} and result["publish_status"] == "published" and can_access(user_id, QUERY_DATA, asset_id=result["id"], connection=con))
     result["can_manage"] = can_access(user_id, MANAGE, connection=con)
-    quality = con.execute("SELECT score,freshness_at,completeness,validity,status,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC LIMIT 1", (result["id"],)).fetchone()
-    result["quality"] = dict(quality) if quality else None
+    quality = con.execute("SELECT run_id,row_count,score,freshness_at,completeness,validity,status,details_json,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC,id DESC LIMIT 1", (result["id"],)).fetchone()
+    result["quality"] = _quality_view(quality)
     return result
 
 
@@ -116,7 +124,12 @@ def get_asset(user_id: str, asset_id: str) -> dict[str, Any]:
         note = con.execute("SELECT detail_json FROM catalog_audit_logs WHERE entity_id=? AND action IN ('reject','withdraw') ORDER BY id DESC LIMIT 1", (asset_id,)).fetchone()
         result["review_note"] = _json(note["detail_json"], {}).get("reason", "") if note else ""
     result["metrics"] = _rows(con.execute("SELECT id,name,display_name,description,formula,grain,certification_status FROM catalog_metrics WHERE domain_id=? AND publish_status='published' ORDER BY display_name", (asset["domain_id"],)))
-    result["quality_history"] = _rows(con.execute("SELECT score,freshness_at,completeness,validity,status,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC LIMIT 12", (asset_id,)))
+    result["quality_history"] = [
+        _quality_view(row) for row in con.execute(
+            "SELECT run_id,row_count,score,freshness_at,completeness,validity,status,details_json,observed_at FROM catalog_quality_snapshots WHERE asset_id=? ORDER BY observed_at DESC,id DESC LIMIT 12",
+            (asset_id,),
+        )
+    ]
     con.close(); return result
 
 
