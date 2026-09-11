@@ -64,3 +64,42 @@ def test_dense_catalog_hits_are_filtered_before_they_leave_the_index(tmp_path, m
     hits = vector_index.retrieve_catalog_vectors("指标口径", "analyst", 5)
 
     assert [item["id"] for item in hits] == ["catalog:asset:asset-orders"]
+
+
+def test_incremental_refresh_embeds_only_affected_documents_and_deletes_stale(monkeypatch):
+    documents = [
+        {"id": "catalog:asset:a", "kind": "table", "asset_ids": ["a"], "domain_id": "d",
+         "title": "A", "content": "new A"},
+        {"id": "catalog:asset:b", "kind": "table", "asset_ids": ["b"], "domain_id": "d",
+         "title": "B", "content": "unchanged B"},
+    ]
+    calls = {"embedded": [], "upserted": [], "deleted": []}
+
+    class Client:
+        def has_collection(self, **_):
+            return True
+
+        def query(self, **_):
+            return [
+                {"id": "catalog:asset:a", "asset_scope_json": '["a"]'},
+                {"id": "catalog:column:stale-a", "asset_scope_json": '["a"]'},
+                {"id": "catalog:asset:b", "asset_scope_json": '["b"]'},
+            ]
+
+        def upsert(self, **kwargs):
+            calls["upserted"].extend(kwargs["data"])
+
+        def delete(self, **kwargs):
+            calls["deleted"].append(kwargs["filter"])
+
+    monkeypatch.setattr(vector_index, "using_milvus", lambda: True)
+    monkeypatch.setattr(vector_index, "published_catalog_documents", lambda: documents)
+    monkeypatch.setattr(vector_index, "milvus_client", lambda: Client())
+    monkeypatch.setattr(
+        vector_index, "_embed_batched",
+        lambda texts: calls["embedded"].extend(texts) or [[0.0] * 512 for _ in texts],
+    )
+    assert vector_index.refresh_catalog_assets({"a"})
+    assert calls["embedded"] == ["A\nnew A"]
+    assert {row["id"] for row in calls["upserted"]} == {"catalog:asset:a", "catalog-index-state"}
+    assert calls["deleted"] == ['id in ["catalog:column:stale-a"]']

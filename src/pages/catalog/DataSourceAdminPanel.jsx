@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import MetadataChangeReview from './MetadataChangeReview.jsx';
 import './DataSourceAdminPanel.css';
 
 const SOURCE_KINDS = [
@@ -63,7 +64,7 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
     setBusy(true); setNotice('');
     try {
       const result = await requestJson(`/api/data-sources/${draft.id}/${action}`, { method: 'POST' });
-      setNotice(action === 'sync' ? `已发现 ${result.table_count} 张表、${result.relationship_count || 0} 条关系；${result.preserved || 0} 个已审核资产保持原样，其余保存为草稿。请到“数据资产 → 待审核”进行审核发布。` : result.message || '连接测试成功。');
+      setNotice(action === 'sync' ? `已生成元数据快照 v${result.snapshot_version}：发现 ${result.table_count} 张表，当前有 ${result.pending_count} 个待审核变更。采集不会直接覆盖目录。` : result.message || '连接测试成功。');
       await loadSources();
       if (action === 'sync') onCatalogChanged();
     } catch (error) {
@@ -108,5 +109,6 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
       <p className="source-note">请配置只读账号。数据源中已有的表、字段说明和主外键会被一并采集；目录审核发布后进入 RAG。</p>
     </div>
     {notice && <p className="save-notice catalog-notice" role="status">{notice}</p>}
+    {draft?.id && <MetadataChangeReview key={draft.id} sourceId={draft.id} onCatalogChanged={onCatalogChanged} />}
   </section>;
 }

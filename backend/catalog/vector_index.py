@@ -165,6 +165,68 @@ def ensure_catalog_index() -> bool:
         return False
 
 
+def refresh_catalog_assets(asset_ids: set[str]) -> bool:
+    """Incrementally re-embed documents scoped to changed catalog assets."""
+
+    global _indexed_version
+    scopes = {str(value) for value in asset_ids if value}
+    if not scopes or not using_milvus():
+        return False
+    documents = published_catalog_documents()
+    version = _version(documents)
+    affected = [
+        item for item in documents
+        if scopes.intersection(str(value) for value in item.get("asset_ids", []))
+    ]
+    current_ids = {str(item["id"]) for item in affected}
+    try:
+        client = milvus_client()
+        collection = _collection(client)
+        vectors = _embed_batched([f"{item['title']}\n{item['content']}" for item in affected])
+        rows = [{
+            "id": str(item["id"]), "entity_type": str(item["kind"]),
+            "asset_scope_json": json.dumps(item.get("asset_ids", []), ensure_ascii=False),
+            "domain_id": str(item.get("domain_id") or ""), "version": version,
+            "title": str(item["title"])[:512], "content": str(item["content"])[:65535], "vector": vector,
+        } for item, vector in zip(affected, vectors)]
+        if rows:
+            client.upsert(collection_name=collection, data=rows)
+        indexed = client.query(
+            collection_name=collection, filter='entity_type != "index_state"',
+            output_fields=["id", "asset_scope_json"], limit=16384, consistency_level="Strong",
+        )
+        stale = []
+        for row in indexed:
+            try:
+                row_scopes = set(json.loads(row.get("asset_scope_json") or "[]"))
+            except (json.JSONDecodeError, TypeError):
+                row_scopes = set()
+            if scopes.intersection(row_scopes) and str(row["id"]) not in current_ids:
+                stale.append(str(row["id"]))
+        if stale:
+            client.delete(
+                collection_name=collection,
+                filter=f"id in [{','.join(json.dumps(item) for item in stale)}]",
+            )
+        client.upsert(collection_name=collection, data=[{
+            "id": "catalog-index-state", "entity_type": "index_state", "asset_scope_json": "[]",
+            "domain_id": "", "version": version, "title": "Catalog metadata index state",
+            "content": version, "vector": [0.0] * EMBEDDING_DIMENSIONS,
+        }])
+        _indexed_version = version
+        log_event(
+            "catalog.rag_incremental_refresh", collection=collection, assets=len(scopes),
+            upserted=len(rows), deleted=len(stale),
+        )
+        return True
+    except Exception as exc:
+        log_event(
+            "catalog.rag_incremental_degraded", error=str(exc), collection=collection_name(),
+            assets=len(scopes),
+        )
+        return False
+
+
 def retrieve_catalog_vectors(query: str, user_id: str, limit: int) -> list[dict[str, Any]]:
     """Dense retrieval with mandatory permission filtering before RRF/reranking."""
     if not user_id or not ensure_catalog_index():

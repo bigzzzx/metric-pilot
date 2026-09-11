@@ -61,9 +61,33 @@ def init_catalog_schema(connection_factory=None) -> None:
     CREATE TABLE IF NOT EXISTS catalog_policies(id TEXT PRIMARY KEY,subject_type TEXT NOT NULL,subject_id TEXT NOT NULL,resource_type TEXT NOT NULL,resource_id TEXT NOT NULL DEFAULT '*',action TEXT NOT NULL,effect TEXT NOT NULL DEFAULT 'allow',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS catalog_publications(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL,published_by TEXT,summary TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS catalog_audit_logs(id INTEGER PRIMARY KEY AUTOINCREMENT,actor_id TEXT,action TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS catalog_sync_runs(
+      id TEXT PRIMARY KEY,source_id TEXT NOT NULL,actor_id TEXT,status TEXT NOT NULL DEFAULT 'pending',
+      snapshot_version INTEGER NOT NULL,snapshot_hash TEXT NOT NULL,table_count INTEGER NOT NULL DEFAULT 0,
+      relationship_count INTEGER NOT NULL DEFAULT 0,added_count INTEGER NOT NULL DEFAULT 0,
+      changed_count INTEGER NOT NULL DEFAULT 0,removed_count INTEGER NOT NULL DEFAULT 0,
+      relationship_change_count INTEGER NOT NULL DEFAULT 0,pending_count INTEGER NOT NULL DEFAULT 0,
+      summary_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT);
+    CREATE TABLE IF NOT EXISTS catalog_sync_snapshots(
+      id TEXT PRIMARY KEY,run_id TEXT NOT NULL,source_id TEXT NOT NULL,version INTEGER NOT NULL,
+      snapshot_hash TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_id,version));
+    CREATE TABLE IF NOT EXISTS catalog_technical_state(
+      source_id TEXT NOT NULL,entity_type TEXT NOT NULL,entity_key TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,
+      content_hash TEXT NOT NULL,payload_json TEXT NOT NULL,updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(source_id,entity_type,entity_key));
+    CREATE TABLE IF NOT EXISTS catalog_sync_changes(
+      id TEXT PRIMARY KEY,run_id TEXT NOT NULL,source_id TEXT NOT NULL,entity_type TEXT NOT NULL,
+      entity_key TEXT NOT NULL,asset_id TEXT,change_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',
+      content_hash TEXT NOT NULL,before_json TEXT,after_json TEXT,summary_json TEXT NOT NULL DEFAULT '{}',
+      decided_by TEXT,decision_reason TEXT NOT NULL DEFAULT '',decided_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE INDEX IF NOT EXISTS idx_catalog_assets_domain ON catalog_assets(domain_id,publish_status);
     CREATE INDEX IF NOT EXISTS idx_catalog_columns_asset ON catalog_columns(asset_id);
     CREATE INDEX IF NOT EXISTS idx_catalog_policy_subject ON catalog_policies(subject_type,subject_id,action);
+    CREATE INDEX IF NOT EXISTS idx_catalog_sync_runs_source ON catalog_sync_runs(source_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_catalog_sync_changes_source ON catalog_sync_changes(source_id,status,created_at DESC);
     """)
     _seed_governance(con)
     _seed_demo_catalog(con)

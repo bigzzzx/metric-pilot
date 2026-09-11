@@ -11,10 +11,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.agent import run_agent, run_agent_stream
-from backend.api import admin_router, catalog_router, knowledge_router, tools_router
+from backend.api import admin_router, catalog_router, knowledge_router, metadata_sync_router, tools_router
 from backend.catalog import init_catalog_schema
 from backend.catalog.repository import provision_user_access
-from backend.catalog.publications import import_discovery_as_draft, require_catalog_admin, require_platform_admin
+from backend.catalog.publications import require_catalog_admin, require_platform_admin
+from backend.catalog.sync import record_discovery
 from backend.catalog.service import is_platform_admin
 from backend.connectors import ConnectorUnavailable
 from backend.data_sources.service import (
@@ -247,6 +248,7 @@ app.include_router(knowledge_router)
 app.include_router(catalog_router)
 app.include_router(admin_router)
 app.include_router(tools_router)
+app.include_router(metadata_sync_router)
 
 
 @app.exception_handler(Exception)
@@ -512,10 +514,10 @@ def sync_data_source(source_id: str, user: dict = Depends(require_user)):
     try:
         row, connector = source_connector(source_id)
         result = connector.discover()
-        con = db(); con.execute("UPDATE data_sources SET last_synced_at=CURRENT_TIMESTAMP WHERE id=?", (source_id,)); con.commit(); con.close()
         log_event("catalog.source_sync", source_id=source_id, kind=row["kind"], table_count=result["table_count"])
-        draft = import_discovery_as_draft(source_id, result, user["id"])
-        return {**result, **draft}
+        review = record_discovery(source_id, result, user["id"])
+        con = db(); con.execute("UPDATE data_sources SET last_synced_at=CURRENT_TIMESTAMP WHERE id=?", (source_id,)); con.commit(); con.close()
+        return {**result, **review}
     except ConnectorUnavailable as exc:
         return JSONResponse(status_code=501, content={"detail": str(exc), "code": "connector_unavailable"})
 @app.get("/api/providers")

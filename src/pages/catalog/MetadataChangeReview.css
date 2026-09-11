@@ -1,0 +1,25 @@
+.metadata-review { margin-top: 18px; border: 1px solid #e1e6ec; border-radius: 10px; padding: 16px; }
+.metadata-review-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.metadata-review-heading h3 { margin: 0; font-size: 14px; }
+.sync-run-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0; align-items: center; }
+.sync-run-summary span { padding: 5px 8px; border-radius: 5px; background: #f3f6fa; color: #47576a; font-size: 10px; }
+.sync-run-summary time { margin-left: auto; color: #8b949f; font-size: 10px; }
+.metadata-batch-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 11px 0; border-top: 1px solid #edf0f3; }
+.metadata-batch-actions label { margin-right: auto; display: flex; align-items: center; gap: 7px; color: #53606e; }
+.metadata-change-list { display: grid; gap: 9px; }
+.metadata-change-list article { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 12px; align-items: start; border: 1px solid #e6eaf0; border-radius: 8px; padding: 12px; }
+.metadata-change-select { padding-top: 3px; }
+.metadata-change-main > div { display: flex; gap: 8px; align-items: center; }
+.metadata-change-main > div span { color: #8b5c16; background: #fff5df; border-radius: 4px; padding: 3px 6px; font-size: 10px; }
+.metadata-change-main input { width: 100%; border: 1px solid #dce2e9; border-radius: 6px; padding: 7px 8px; font: inherit; }
+.metadata-change-summary { margin: 8px 0; padding-left: 18px; color: #657180; font-size: 11px; line-height: 1.6; }
+.metadata-change-actions { display: flex; gap: 7px; }
+.metadata-no-change { background: #f0f8f3; color: #34704d; border-radius: 6px; padding: 10px; }
+.sync-history { margin-top: 13px; color: #66717f; font-size: 11px; }
+.sync-history p { border-top: 1px solid #edf0f3; padding-top: 7px; }
+.sync-history p { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+@media(max-width:700px) {
+  .metadata-change-list article { grid-template-columns: auto 1fr; }
+  .metadata-change-actions { grid-column: 2; }
+  .sync-run-summary time { width: 100%; margin-left: 0; }
+}
