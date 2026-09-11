@@ -31,6 +31,7 @@ from backend.query_quality.examples import retrieve_examples
 from backend.query_quality.planner_context import candidate_tables, schema_instructions, compact_rag
 from backend.query_quality.sql_normalization import canonicalize_documented_enums
 from backend.query_fast_path import is_unambiguous_technical_query
+from backend.catalog.quality_context import append_quality_notice, quality_context_for_schemas, quality_prompt_context
 
 
 
@@ -379,10 +380,13 @@ async def data_query_agent(state: AgentOverallState) -> AgentOverallState:
                 *schemas["unavailable"], outcome.error.message if outcome.error else "表结构查询失败"
             ]))
     await inspect_tables(candidate_tables(state.get("rag", []), question))
+    quality_context = await asyncio.to_thread(
+        quality_context_for_schemas, state.get("user_id", ""), schemas,
+    )
     evidence = prompt_context(state["message"], compact_rag(state.get("rag", []), schemas))
     metrics = await asyncio.to_thread(metric_context, question, state.get("rag", []), state.get("user_id", ""))
     examples = await asyncio.to_thread(retrieve_examples, question, state.get("user_id", ""))
-    prompt = '''You are the Data Query Agent. Use only the supplied RAG evidence. Answer metadata questions directly;
+    base_prompt = '''You are the Data Query Agent. Use only the supplied RAG evidence. Answer metadata questions directly;
 generate SQL only if data must be queried. Use the SQL dialect of the verified source (SQLite or PostgreSQL).
 SQL must be one SELECT/WITH statement against a single source. Return source_id from verified schema.
 PostgreSQL table names MUST include the verified namespace (schema.table).
@@ -391,13 +395,17 @@ If a requested asset is absent from supplied evidence, say it cannot be found wi
 (当前权限范围内未找到可用数据资产). Never confirm it does not exist and never substitute an unrelated asset.
 Return JSON only:
 {"answer":"Chinese answer","sql":"optional SQL","source_id":"verified source id or null"}. RAG evidence:\n''' + evidence
-    prompt += planning_instructions(metrics, examples)
-    prompt += schema_instructions(schemas)
+    base_prompt += planning_instructions(metrics, examples)
+    prompt = base_prompt + schema_instructions(schemas) + quality_prompt_context(quality_context)
     plan = await complete_structured("data-query-agent", messages(state, prompt), QueryPlanOutput, state.get("model_id"))
     if plan.schema_request:
         # The first plan is only a tool request; never execute SQL from that response.
         await inspect_tables(plan.schema_request)
-        followup = prompt + "\nRequested schema lookup result:\n" + schema_instructions(schemas)
+        quality_context = await asyncio.to_thread(
+            quality_context_for_schemas, state.get("user_id", ""), schemas,
+        )
+        followup = base_prompt + "\nRequested schema lookup result:\n" + schema_instructions(schemas)
+        followup += "\nUpdated verified quality context:\n" + quality_prompt_context(quality_context)
         followup += "\nNo further lookup is allowed this turn. Return schema_request=[] with a verified SQL or a clarification."
         plan = await complete_structured("data-query-agent", messages(state, followup), QueryPlanOutput, state.get("model_id"))
     if plan.schema_request or (plan.sql and not schemas["tables"]):
@@ -409,9 +417,13 @@ Return JSON only:
             plan.source_id = next(iter(verified_sources))
         elif verified_sources and plan.source_id not in verified_sources:
             plan = QueryPlanOutput(answer="请明确要查询的数据源；本次只能查询同一数据源内已核实的表。", sql=None)
-    _log_node_duration("data_query", started_at, has_sql=bool(plan.sql))
-    return {**state, "query_metrics": metrics, "verified_schemas": schemas, "plan": plan.model_dump(),
-            **({"final": plan.model_dump()} if not plan.sql else {})}
+    plan_data = plan.model_dump()
+    if not plan.sql:
+        plan_data["answer"] = append_quality_notice(plan_data.get("answer", ""), quality_context.get("notice"))
+    _log_node_duration("data_query", started_at, has_sql=bool(plan.sql), quality_risks=len(quality_context["risks"]))
+    return {**state, "query_metrics": metrics, "verified_schemas": schemas,
+            "quality_risks": quality_context["risks"], "quality_notice": quality_context["notice"], "plan": plan_data,
+            **({"final": plan_data} if not plan.sql else {})}
 
 
 def route_after_plan(state: AgentOverallState) -> str:
@@ -493,22 +505,26 @@ async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
     state = {**state, "last_query_result": result}
     simple_answer = deterministic_query_answer(state, result)
     if simple_answer:
-        return {**state, "result": result, "final": {"answer": simple_answer}}
+        return {**state, "result": result, "final": {"answer": append_quality_notice(simple_answer, state.get("quality_notice"))}}
     if streaming_answer.get():
         prompt = ("You are the Data Analysis Agent. Answer in Chinese using only the current trusted result "
                   "and RAG evidence. Never invent data or assert filters absent from the executed SQL.\n"
                   + "Executed SQL:\n" + str(state.get("sql") or "Previous query; SQL unavailable") + "\n"
                   + prompt_context(state["message"], state.get("rag", []))
+                  + quality_prompt_context({"risks": state.get("quality_risks", [])})
                   + "\nTrusted result:\n" + json.dumps(result, ensure_ascii=False))
-        final = await _collect_stream_answer(state, "data-analysis-agent", prompt)
+        final = await _collect_stream_answer(state, "data-analysis-agent", prompt, state.get("quality_notice", ""))
         return {**state, "result": result, "final": final}
     prompt = '''You are the Data Analysis Agent. Give a rigorous Chinese analysis using only RAG evidence and trusted SQL result.
 You may explain implications and suggest next analyses, but never invent data or assert filters absent from the executed SQL. Return JSON only:
 {"answer":"full Chinese analysis","summary":"core conclusion","insights":["..."],"limitations":["..."],"follow_up_questions":["..."]}.
 RAG evidence:\n''' + prompt_context(state["message"], state.get("rag", [])) + "\nTrusted result:\n" + json.dumps(result, ensure_ascii=False)
     prompt += "\nExecuted SQL:\n" + str(state.get("sql") or "Previous query; SQL unavailable")
+    prompt += quality_prompt_context({"risks": state.get("quality_risks", [])})
     final = await complete_structured("data-analysis-agent", messages(state, prompt, include_result=True), AnalysisOutput, state.get("model_id"))
-    return {**state, "result": result, "final": final.model_dump()}
+    final_data = final.model_dump()
+    final_data["answer"] = append_quality_notice(final_data.get("answer", ""), state.get("quality_notice"))
+    return {**state, "result": result, "final": final_data}
 
 
 def deterministic_query_answer(state: AgentOverallState, result: list[dict]) -> str | None:
@@ -653,7 +669,7 @@ Writable local demo schema:
 
 def failed_query(state: AgentOverallState) -> AgentOverallState:
     prefix = "查询已停止：" if state.get("query_terminal") else "SQL 在一次自动修复后仍无法安全执行："
-    return {**state, "final": {"answer": prefix + state.get("query_error", "unknown error")}}
+    return {**state, "final": {"answer": append_quality_notice(prefix + state.get("query_error", "unknown error"), state.get("quality_notice"))}}
 
 
 graph = build_graph(globals())
@@ -697,7 +713,8 @@ async def _emit_text(text: str) -> AsyncGenerator[dict, None]:
         yield {"event": "delta", "content": text[index:index + 24]}
 
 
-async def _stream_final_answer(state: AgentOverallState, agent_id: str, prompt: str, include_result: bool = False) -> AsyncGenerator[dict, None]:
+async def _stream_final_answer(state: AgentOverallState, agent_id: str, prompt: str, include_result: bool = False,
+                               quality_notice: str = "") -> AsyncGenerator[dict, None]:
     started_at = time.perf_counter()
     first_delta_sent = False
     answer = ""
@@ -732,12 +749,16 @@ async def _stream_final_answer(state: AgentOverallState, agent_id: str, prompt: 
             answer = wrapped.get("answer") or wrapped.get("response")
     except json.JSONDecodeError:
         pass
+    notice = str(quality_notice or "").strip()
+    if notice and notice not in answer:
+        answer = append_quality_notice(answer, notice)
+        yield {"event": "delta", "content": "\n\n" + notice}
     yield {"event": "final_answer", "answer": answer}
 
 
-async def _collect_stream_answer(state, agent_id, prompt) -> dict:
+async def _collect_stream_answer(state, agent_id, prompt, quality_notice: str = "") -> dict:
     final = None
-    async for event in _stream_final_answer(state, agent_id, prompt):
+    async for event in _stream_final_answer(state, agent_id, prompt, quality_notice=quality_notice):
         if event["event"] == "final_answer":
             final = AnswerOutput(answer=event["answer"]).model_dump()
         else:

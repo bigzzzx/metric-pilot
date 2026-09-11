@@ -142,6 +142,23 @@ def test_simple_scalar_query_skips_second_model_analysis(monkeypatch):
     assert state["final"]["answer"] == "查询完成：共有 1200 条记录。"
 
 
+def test_simple_scalar_query_always_discloses_attached_quality_risk(monkeypatch):
+    async def fail(*_args, **_kwargs):
+        raise AssertionError("simple scalar result must not call the analysis model")
+
+    monkeypatch.setattr(agent, "complete_structured", fail)
+    state = asyncio.run(agent.data_analysis_agent({
+        "message": "ods.orders 一共有多少行？",
+        "history": [],
+        "sql": "SELECT COUNT(*) AS row_count FROM ods.orders",
+        "result": [{"row_count": 1200}],
+        "quality_notice": "数据质量提示：ods.orders 的最新检测已失败。",
+    }))
+    assert state["final"]["answer"] == (
+        "查询完成：共有 1200 条记录。\n\n数据质量提示：ods.orders 的最新检测已失败。"
+    )
+
+
 def test_qualified_table_read_uses_router_fast_path():
     assert is_unambiguous_technical_query("查询 ods.orders 一共有多少行")
     assert is_unambiguous_technical_query("直接汇总 ads.daily_trade 的原始物理字段 gmv")

@@ -30,6 +30,8 @@ class AgentOutputState(TypedDict, total=False):
     permission_error: dict
     tool_result: dict
     verified_schemas: dict
+    quality_risks: list[dict]
+    quality_notice: str
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
