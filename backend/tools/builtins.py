@@ -124,6 +124,7 @@ def register_builtin_tools(target: ToolRegistry | None = None) -> ToolRegistry:
             description="核实少量授权表的完整可查询字段，不读取样例数据。",
             input_schema=SchemaLookupInput, output_schema=SchemaLookupOutput,
             handler=lookup_schema, allowed_agents=frozenset({"data-query-agent"}),
+            cache_ttl_seconds=300,
         ),
         ToolSpec(
             id="catalog_rag", name="元数据 RAG",
@@ -136,6 +137,7 @@ def register_builtin_tools(target: ToolRegistry | None = None) -> ToolRegistry:
             description="在用户有权限的数据资产上执行一条 SELECT/WITH 查询。",
             input_schema=ReadonlySqlInput, output_schema=ReadonlySqlOutput,
             handler=_readonly_sql, allowed_agents=frozenset({"data-query-agent"}),
+            cache_ttl_seconds=60,
         ),
         ToolSpec(
             id="memory_search", name="长期记忆检索",

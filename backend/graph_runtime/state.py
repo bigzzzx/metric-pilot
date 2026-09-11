@@ -32,6 +32,9 @@ class AgentOutputState(TypedDict, total=False):
     verified_schemas: dict
     quality_risks: list[dict]
     quality_notice: str
+    plan_cache_hit: bool
+    answer_cache_hit: bool
+    route_cache_hit: bool
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool

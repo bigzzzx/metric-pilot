@@ -32,8 +32,26 @@ from backend.query_quality.planner_context import candidate_tables, schema_instr
 from backend.query_quality.sql_normalization import canonicalize_documented_enums
 from backend.query_fast_path import is_unambiguous_technical_query
 from backend.catalog.quality_context import append_quality_notice, quality_context_for_schemas, quality_prompt_context
+from backend.agent_cache import cache_ttl, configured_agent_cache
 
 
+
+agent_cache = configured_agent_cache()
+PLAN_CACHE_TTL_SECONDS = cache_ttl("AGENT_PLAN_CACHE_TTL_SECONDS", 300)
+ANSWER_CACHE_TTL_SECONDS = cache_ttl("AGENT_ANSWER_CACHE_TTL_SECONDS", 300)
+ROUTE_CACHE_TTL_SECONDS = cache_ttl("AGENT_ROUTE_CACHE_TTL_SECONDS", 300)
+
+
+def _cache_conversation_context(state: AgentOverallState) -> dict:
+    return {
+        "message": state.get("message", ""),
+        "history": state.get("history", [])[-PRE_COMPACTION_HISTORY_LIMIT:],
+        "conversation_summary": state.get("conversation_summary", ""),
+        "user_memories": state.get("user_memories", []),
+        "skill_context": state.get("skill_context", ""),
+        "model_id": state.get("model_id"),
+        "user_id": state.get("user_id", ""),
+    }
 
 
 def _tool_context(state: AgentOverallState, tool_id: str, agent_id: str | None = None) -> ToolExecutionContext:
@@ -174,11 +192,32 @@ Use lower_snake_case keys. Use operation forget only when the user explicitly as
 When no action is justified, return an empty memory_actions list.'''
     prompt += "\n\nAvailable bound Skills (select up to 3 only when relevant):\n" + json.dumps(available_skills, ensure_ascii=False)
     prompt += "\n\nAvailable bound MCP tools. Select one only when it is needed to satisfy the request; copy its exact id and provide Schema-valid arguments:\n" + json.dumps(available_mcp_tools, ensure_ascii=False)
-    try:
-        decision = (await complete_structured("data-query-agent", messages(state, prompt), RouteOutput, state.get("model_id"))).model_dump()
-    except Exception:
-        _log_node_duration("router", started_at, status="error")
-        raise
+    route_identity = {
+        "contract": "router-v1",
+        "context": _cache_conversation_context(state),
+        "has_result": has_result,
+        "memory_tools_enabled": memory_tools_enabled,
+        "available_skills": available_skills,
+        "available_mcp_tools": available_mcp_tools,
+    }
+    cached_route = agent_cache.get("router", route_identity) if agent_cache else None
+    route_cache_hit = False
+    if cached_route:
+        try:
+            decision = RouteOutput.model_validate(
+                {key: value for key, value in cached_route.items() if key != "_cached_at"}
+            ).model_dump()
+            route_cache_hit = True
+        except Exception:
+            cached_route = None
+    if not cached_route:
+        try:
+            decision = (await complete_structured("data-query-agent", messages(state, prompt), RouteOutput, state.get("model_id"))).model_dump()
+        except Exception:
+            _log_node_duration("router", started_at, status="error")
+            raise
+        if agent_cache and not decision.get("memory_actions"):
+            agent_cache.set("router", route_identity, decision, ROUTE_CACHE_TTL_SECONDS)
     route = decision.get("route", "general")
     if route == "data_analysis" and not has_result:
         route = "data_query"
@@ -216,8 +255,9 @@ When no action is justified, return an empty memory_actions list.'''
         requires_data_evidence=requires_data_evidence,
         memory_actions=len(actions),
         memory_retrieval=memory_retrieval,
+        route_cache_hit=route_cache_hit,
     )
-    _log_node_duration("router", started_at, route=route, route_source="model")
+    _log_node_duration("router", started_at, route=route, route_source="model", route_cache_hit=route_cache_hit)
     return {
         **state,
         "route": route,
@@ -231,6 +271,7 @@ When no action is justified, return an empty memory_actions list.'''
         "selected_skill_ids": selected_skill_ids,
         "skill_context": selected_context,
         "mcp_tool_call": tool_call,
+        "route_cache_hit": route_cache_hit,
     }
 
 
@@ -397,7 +438,26 @@ Return JSON only:
 {"answer":"Chinese answer","sql":"optional SQL","source_id":"verified source id or null"}. RAG evidence:\n''' + evidence
     base_prompt += planning_instructions(metrics, examples)
     prompt = base_prompt + schema_instructions(schemas) + quality_prompt_context(quality_context)
-    plan = await complete_structured("data-query-agent", messages(state, prompt), QueryPlanOutput, state.get("model_id"))
+    plan_identity = {
+        "contract": "query-plan-v1",
+        "context": _cache_conversation_context(state),
+        "rag": compact_rag(state.get("rag", []), schemas),
+        "schemas": schemas,
+        "metrics": metrics,
+        "examples": examples,
+        "quality": quality_context,
+    }
+    cached_plan = agent_cache.get("query-plan", plan_identity) if agent_cache else None
+    plan_cache_hit = False
+    if cached_plan:
+        try:
+            plan = QueryPlanOutput.model_validate({key: value for key, value in cached_plan.items() if key != "_cached_at"})
+            plan_cache_hit = True
+        except Exception:
+            cached_plan = None
+    if not cached_plan:
+        plan = await complete_structured("data-query-agent", messages(state, prompt), QueryPlanOutput, state.get("model_id"))
+    used_schema_request = bool(plan.schema_request)
     if plan.schema_request:
         # The first plan is only a tool request; never execute SQL from that response.
         await inspect_tables(plan.schema_request)
@@ -417,12 +477,16 @@ Return JSON only:
             plan.source_id = next(iter(verified_sources))
         elif verified_sources and plan.source_id not in verified_sources:
             plan = QueryPlanOutput(answer="请明确要查询的数据源；本次只能查询同一数据源内已核实的表。", sql=None)
+    if agent_cache and not plan_cache_hit and not used_schema_request and not plan.schema_request:
+        agent_cache.set("query-plan", plan_identity, plan.model_dump(mode="json"), PLAN_CACHE_TTL_SECONDS)
     plan_data = plan.model_dump()
     if not plan.sql:
         plan_data["answer"] = append_quality_notice(plan_data.get("answer", ""), quality_context.get("notice"))
-    _log_node_duration("data_query", started_at, has_sql=bool(plan.sql), quality_risks=len(quality_context["risks"]))
+    _log_node_duration("data_query", started_at, has_sql=bool(plan.sql), quality_risks=len(quality_context["risks"]),
+                       plan_cache_hit=plan_cache_hit)
     return {**state, "query_metrics": metrics, "verified_schemas": schemas,
             "quality_risks": quality_context["risks"], "quality_notice": quality_context["notice"], "plan": plan_data,
+            "plan_cache_hit": plan_cache_hit,
             **({"final": plan_data} if not plan.sql else {})}
 
 
@@ -506,6 +570,21 @@ async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
     simple_answer = deterministic_query_answer(state, result)
     if simple_answer:
         return {**state, "result": result, "final": {"answer": append_quality_notice(simple_answer, state.get("quality_notice"))}}
+    answer_identity = {
+        "contract": "data-analysis-v1",
+        "context": _cache_conversation_context(state),
+        "sql": state.get("sql") or "",
+        "result": result,
+        "rag": state.get("rag", []),
+        "quality_risks": state.get("quality_risks", []),
+        "quality_notice": state.get("quality_notice", ""),
+    }
+    cached_answer = agent_cache.get("data-analysis", answer_identity) if agent_cache else None
+    if cached_answer:
+        answer = str(cached_answer.get("answer") or "").strip()
+        if answer:
+            return {**state, "result": result, "final": {key: value for key, value in cached_answer.items() if key != "_cached_at"},
+                    "answer_cache_hit": True}
     if streaming_answer.get():
         prompt = ("You are the Data Analysis Agent. Answer in Chinese using only the current trusted result "
                   "and RAG evidence. Never invent data or assert filters absent from the executed SQL.\n"
@@ -514,7 +593,9 @@ async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
                   + quality_prompt_context({"risks": state.get("quality_risks", [])})
                   + "\nTrusted result:\n" + json.dumps(result, ensure_ascii=False))
         final = await _collect_stream_answer(state, "data-analysis-agent", prompt, state.get("quality_notice", ""))
-        return {**state, "result": result, "final": final}
+        if agent_cache:
+            agent_cache.set("data-analysis", answer_identity, final, ANSWER_CACHE_TTL_SECONDS)
+        return {**state, "result": result, "final": final, "answer_cache_hit": False}
     prompt = '''You are the Data Analysis Agent. Give a rigorous Chinese analysis using only RAG evidence and trusted SQL result.
 You may explain implications and suggest next analyses, but never invent data or assert filters absent from the executed SQL. Return JSON only:
 {"answer":"full Chinese analysis","summary":"core conclusion","insights":["..."],"limitations":["..."],"follow_up_questions":["..."]}.
@@ -524,7 +605,9 @@ RAG evidence:\n''' + prompt_context(state["message"], state.get("rag", [])) + "\
     final = await complete_structured("data-analysis-agent", messages(state, prompt, include_result=True), AnalysisOutput, state.get("model_id"))
     final_data = final.model_dump()
     final_data["answer"] = append_quality_notice(final_data.get("answer", ""), state.get("quality_notice"))
-    return {**state, "result": result, "final": final_data}
+    if agent_cache:
+        agent_cache.set("data-analysis", answer_identity, final_data, ANSWER_CACHE_TTL_SECONDS)
+    return {**state, "result": result, "final": final_data, "answer_cache_hit": False}
 
 
 def deterministic_query_answer(state: AgentOverallState, result: list[dict]) -> str | None:

@@ -78,6 +78,7 @@ python-pptx==1.0.2
 pywin32==312; sys_platform == "win32"
 PyYAML==6.0.3
 referencing==0.37.0
+redis==6.4.0
 requests==2.34.2
 requests-toolbelt==1.0.0
 rpds-py==2026.6.3

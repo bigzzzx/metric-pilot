@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from backend.observability import log_event
 from backend.tools.approvals import claim_approved, create_approval, record_audit
 from backend.tools.errors import ToolApprovalError, ToolRuntimeError
-from backend.tools.executor import ToolExecutor
+from backend.tools.executor import ToolExecutor, executor
 from backend.tools.models import RiskLevel, ToolError, ToolExecutionContext, ToolResult, ToolStatus
 from backend.tools.policy import evaluate_tool_policy
 
@@ -92,6 +92,8 @@ class AsyncToolExecutor(ToolExecutor):
                 connection_factory=self.connection_factory,
             )
             log_event("tool.executed", tool_id=tool_id, duration_ms=duration)
+            if self.cache and decision.risk_level is RiskLevel.HIGH:
+                self.cache.invalidate_all()
             return ToolResult(
                 status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
                 data=output.model_dump(mode="json"), audit_id=audit_id,
@@ -112,5 +114,4 @@ class AsyncToolExecutor(ToolExecutor):
             )
 
 
-async_executor = AsyncToolExecutor()
-
+async_executor = AsyncToolExecutor(cache=executor.cache)

@@ -22,7 +22,7 @@ function Test-LocalPort([int]$Port) {
 }
 
 if (-not $SkipTunnel) {
-    $tunnelPorts = @(19530, 8081, 8082, 15433)
+    $tunnelPorts = @(19530, 8081, 8082, 15433, 16379)
     $activeTunnelPorts = @($tunnelPorts | Where-Object { Test-LocalPort $_ })
     if ($activeTunnelPorts.Count -eq 0) {
         $tunnelScript = Join-Path $PSScriptRoot "start-milvus-tunnel.ps1"

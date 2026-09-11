@@ -95,9 +95,15 @@ def build_query_trace(state: dict) -> dict[str, Any] | None:
         "execution": {
             "status": tool.get("status") if isinstance(tool, dict) else None,
             "row_count": len(rows),
+            "tool_cache_hit": bool(tool.get("cache_hit")) if isinstance(tool, dict) else False,
             "error_code": error.get("code") if isinstance(error, dict) else None,
             "error_message": (error.get("message") if isinstance(error, dict) else None)
                 or state.get("query_error"),
+        },
+        "cache": {
+            "route_hit": bool(state.get("route_cache_hit")),
+            "plan_hit": bool(state.get("plan_cache_hit")),
+            "answer_hit": bool(state.get("answer_cache_hit")),
         },
         "nodes": _nodes(state.get("node_trace") or []),
     }

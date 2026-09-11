@@ -78,6 +78,15 @@ def _reranker() -> dict:
     return _http_model("RERANK_BACKEND", "RERANK_BASE_URL", "http://127.0.0.1:8082")
 
 
+def _tool_cache() -> dict:
+    from backend.tools.executor import executor
+
+    if executor.cache is None:
+        return {"status": "disabled", "backend": "none"}
+    executor.cache.ping()
+    return {"status": "ok", "backend": executor.cache.backend_name}
+
+
 def dependency_health() -> dict:
     """Probe independent dependencies concurrently and return a safe readiness view."""
     checks = {
@@ -85,6 +94,7 @@ def dependency_health() -> dict:
         "vector_store": _vector_store,
         "embedding": _embedding,
         "reranker": _reranker,
+        "tool_cache": _tool_cache,
     }
     dependencies: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=len(checks), thread_name_prefix="health") as executor:

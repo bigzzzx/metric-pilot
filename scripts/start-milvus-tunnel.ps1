@@ -5,6 +5,7 @@ param(
     [int]$EmbeddingPort = 8081,
     [int]$RerankerPort = 8082,
     [int]$PostgresPort = 15433,
+    [int]$RedisPort = 16379,
     [int]$MaxRetrySeconds = 30
 )
 
@@ -26,12 +27,13 @@ $sshArguments = @(
     "-L", "127.0.0.1:$EmbeddingPort`:127.0.0.1:8081",
     "-L", "127.0.0.1:$RerankerPort`:127.0.0.1:8082",
     "-L", "127.0.0.1:$PostgresPort`:127.0.0.1:5433",
+    "-L", "127.0.0.1:$RedisPort`:127.0.0.1:6379",
     $Server
 )
 
 $retrySeconds = 2
 while ($true) {
-    Write-Host "Opening secure service tunnels: Milvus=$MilvusPort, embedding=$EmbeddingPort, reranker=$RerankerPort, PostgreSQL=$PostgresPort ..."
+    Write-Host "Opening secure service tunnels: Milvus=$MilvusPort, embedding=$EmbeddingPort, reranker=$RerankerPort, PostgreSQL=$PostgresPort, Redis=$RedisPort ..."
     & ssh @sshArguments
     $exitCode = $LASTEXITCODE
     Write-Warning "SSH tunnel stopped (exit code $exitCode). Reconnecting in $retrySeconds seconds..."

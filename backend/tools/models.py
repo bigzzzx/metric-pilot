@@ -36,6 +36,7 @@ class ToolExecutionContext(StrictModel):
     resource_type: str | None = None
     resource_id: str | None = None
     domain_id: str | None = None
+    cache_mode: Literal["default", "refresh", "bypass"] = "default"
 
 
 class ToolError(StrictModel):
@@ -54,6 +55,7 @@ class ToolResult(StrictModel):
     error: ToolError | None = None
     approval: dict[str, Any] | None = None
     audit_id: str | None = None
+    cache_hit: bool = False
 
 
 Handler = Callable[[BaseModel, ToolExecutionContext], Any]
@@ -77,6 +79,7 @@ class ToolSpec:
     source: str = "builtin"
     version: str = "1"
     redact_input: Redactor | None = None
+    cache_ttl_seconds: int = 0
 
     def catalog_item(self) -> dict[str, Any]:
         return {
@@ -91,6 +94,7 @@ class ToolSpec:
             "category": self.category,
             "source": self.source,
             "version": self.version,
+            "cache_ttl_seconds": self.cache_ttl_seconds,
             "input_schema": self.input_schema.model_json_schema(),
             "output_schema": self.output_schema.model_json_schema(),
         }

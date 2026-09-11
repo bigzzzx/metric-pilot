@@ -4,6 +4,7 @@ from backend.query_trace import build_query_trace
 def test_query_trace_is_bounded_and_omits_prompts_credentials_and_rows():
     state = {
         "route": "data_query", "route_source": "model", "contextual_follow_up": True,
+        "route_cache_hit": True, "plan_cache_hit": True, "answer_cache_hit": False,
         "rag": [{
             "id": f"source-{index}", "kind": "table", "title": f"表 {index}",
             "asset_ids": [f"asset-{index}"], "domain_id": "domain-ecommerce",
@@ -17,7 +18,8 @@ def test_query_trace_is_bounded_and_omits_prompts_credentials_and_rows():
         "plan": {"metric_refs": [{"id": "metric-gmv", "version": "a" * 64}],
                  "filters": ["status = 'PAID'"], "join_relationships": []},
         "result": [{"secret": "must not enter trace"}],
-        "tool_result": {"status": "success", "data": {"rows": [{"secret": "hidden"}]}},
+        "tool_result": {"status": "success", "cache_hit": True,
+                        "data": {"rows": [{"secret": "hidden"}]}},
         "node_trace": [{"node": f"n{index}", "label": "step", "duration_ms": index, "status": "success"}
                        for index in range(30)],
     }
@@ -29,6 +31,8 @@ def test_query_trace_is_bounded_and_omits_prompts_credentials_and_rows():
         "source_name": "测试数仓", "catalog_version": 3,
     }
     assert trace["execution"]["row_count"] == 1
+    assert trace["execution"]["tool_cache_hit"] is True
+    assert trace["cache"] == {"route_hit": True, "plan_hit": True, "answer_hit": False}
     rendered = str(trace)
     assert "secret prompt content" not in rendered
     assert "must not enter trace" not in rendered

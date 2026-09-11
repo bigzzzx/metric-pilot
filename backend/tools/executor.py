@@ -19,6 +19,7 @@ from backend.tools.models import (
 )
 from backend.tools.policy import evaluate_tool_policy
 from backend.tools.registry import ToolRegistry, registry
+from backend.tools.cache import ToolCache, configured_tool_cache
 
 ConnectionFactory = Callable[[], Any]
 
@@ -28,9 +29,11 @@ class ToolExecutor:
         self,
         tool_registry: ToolRegistry | None = None,
         connection_factory: ConnectionFactory | None = None,
+        cache: ToolCache | None = None,
     ) -> None:
         self.registry = tool_registry or registry
         self.connection_factory = connection_factory or db
+        self.cache = cache
 
     def _error_result(
         self,
@@ -82,6 +85,24 @@ class ToolExecutor:
                 status=ToolStatus.DENIED,
                 required_permission=decision.required_permission,
             )
+        if (self.cache and decision.risk_level is not RiskLevel.HIGH
+                and spec.cache_ttl_seconds > 0 and context.cache_mode == "default"):
+            cached = self.cache.get(spec, normalized, context)
+            if cached is not None:
+                try:
+                    output = spec.output_schema.model_validate(cached.data)
+                except ValidationError:
+                    self.cache.delete(cached.key)
+                else:
+                    audit_id = record_audit(
+                        context, tool_id, "executed", ToolStatus.SUCCESS.value,
+                        detail={"cache_hit": True, "cache_backend": self.cache.backend_name},
+                        duration_ms=0, connection_factory=self.connection_factory,
+                    )
+                    return ToolResult(
+                        status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
+                        data=output.model_dump(mode="json"), audit_id=audit_id, cache_hit=True,
+                    )
         if decision.risk_level is RiskLevel.HIGH and not approval_id:
             display = spec.redact_input(validated) if spec.redact_input else normalized
             approval = create_approval(
@@ -124,17 +145,25 @@ class ToolExecutor:
         try:
             raw = spec.handler(validated, context)
             output = spec.output_schema.model_validate(raw)
+            serialized = output.model_dump(mode="json")
             duration = round((time.perf_counter() - started) * 1000)
             audit_id = record_audit(
                 context, tool_id, "executed", ToolStatus.SUCCESS.value,
                 approval_id=approval_id, duration_ms=duration,
+                detail={"cache_hit": False},
                 connection_factory=self.connection_factory,
             )
             log_event("tool.executed", tool_id=tool_id, duration_ms=duration)
-            return ToolResult(
+            result = ToolResult(
                 status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
-                data=output.model_dump(mode="json"), audit_id=audit_id,
+                data=serialized, audit_id=audit_id,
             )
+            if (self.cache and decision.risk_level is not RiskLevel.HIGH
+                    and spec.cache_ttl_seconds > 0 and context.cache_mode != "bypass"):
+                self.cache.set(spec, normalized, context, serialized)
+            if self.cache and tool_id in {"sql_write", "etl_execute"}:
+                self.cache.invalidate_all()
+            return result
         except ToolRuntimeError as exc:
             status = ToolStatus.UNAVAILABLE if exc.code == "tool_unavailable" else ToolStatus.FAILED
             return self._error_result(tool_id, context, exc.code, exc.message, status=status)
@@ -146,7 +175,7 @@ class ToolExecutor:
             )
 
 
-executor = ToolExecutor()
+executor = ToolExecutor(cache=configured_tool_cache(db))
 
 # Import after the executor class is defined to avoid a registration cycle.
 from backend.tools.builtins import register_builtin_tools  # noqa: E402
