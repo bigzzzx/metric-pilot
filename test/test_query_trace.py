@@ -32,7 +32,9 @@ def test_query_trace_is_bounded_and_omits_prompts_credentials_and_rows():
     }
     assert trace["execution"]["row_count"] == 1
     assert trace["execution"]["tool_cache_hit"] is True
-    assert trace["cache"] == {"route_hit": True, "plan_hit": True, "answer_hit": False}
+    assert trace["cache"] == {
+        "turn_hit": False, "route_hit": True, "plan_hit": True, "answer_hit": False,
+    }
     rendered = str(trace)
     assert "secret prompt content" not in rendered
     assert "must not enter trace" not in rendered

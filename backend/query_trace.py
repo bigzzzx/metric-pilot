@@ -101,6 +101,7 @@ def build_query_trace(state: dict) -> dict[str, Any] | None:
                 or state.get("query_error"),
         },
         "cache": {
+            "turn_hit": False,
             "route_hit": bool(state.get("route_cache_hit")),
             "plan_hit": bool(state.get("plan_cache_hit")),
             "answer_hit": bool(state.get("answer_cache_hit")),

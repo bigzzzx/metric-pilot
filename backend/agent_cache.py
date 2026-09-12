@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,9 +18,10 @@ def _canonical(value: Any) -> str:
 class RedisAgentCache:
     backend_name = "redis"
 
-    def __init__(self, client: Any, prefix: str = "data-agent:agent-cache:v1") -> None:
+    def __init__(self, client: Any, prefix: str = "data-agent:agent-cache:v1", max_entries: int = 5_000) -> None:
         self.client = client
         self.prefix = prefix.rstrip(":")
+        self.max_entries = max_entries
 
     def _key(self, namespace: str, identity: dict[str, Any]) -> str:
         digest = hashlib.sha256(_canonical(identity).encode("utf-8")).hexdigest()
@@ -44,11 +46,28 @@ class RedisAgentCache:
 
     def set(self, namespace: str, identity: dict[str, Any], payload: dict[str, Any], ttl_seconds: int) -> None:
         try:
+            key = self._key(namespace, identity)
             value = _canonical({**payload, "_cached_at": datetime.now(UTC).isoformat()})
-            self.client.set(self._key(namespace, identity), value, ex=ttl_seconds)
+            self.client.set(key, value, ex=ttl_seconds)
+            self._remember_key(key, ttl_seconds)
             log_event("agent.cache_write", namespace=namespace, backend=self.backend_name, ttl_seconds=ttl_seconds)
         except Exception as exc:
             log_event("agent.cache_unavailable", level=30, namespace=namespace, error_type=type(exc).__name__)
+
+    def _remember_key(self, key: str, ttl_seconds: int) -> None:
+        required = ("zadd", "zcard", "zpopmin", "zremrangebyscore")
+        if self.max_entries <= 0 or not all(hasattr(self.client, name) for name in required):
+            return
+        index = f"{self.prefix}:expiry-index"
+        now = time.time()
+        self.client.zremrangebyscore(index, "-inf", now)
+        self.client.zadd(index, {key: now + ttl_seconds})
+        overflow = int(self.client.zcard(index)) - self.max_entries
+        if overflow > 0:
+            victims = self.client.zpopmin(index, overflow)
+            victim_keys = [item[0] if isinstance(item, (tuple, list)) else item for item in victims]
+            if victim_keys:
+                self.client.delete(*victim_keys)
 
 
 def configured_agent_cache() -> RedisAgentCache | None:
@@ -67,7 +86,11 @@ def configured_agent_cache() -> RedisAgentCache | None:
         health_check_interval=30,
     )
     prefix = os.getenv("AGENT_CACHE_PREFIX", "data-agent:agent-cache:v1").strip()
-    return RedisAgentCache(client, prefix or "data-agent:agent-cache:v1")
+    try:
+        max_entries = max(1, int(os.getenv("AGENT_CACHE_MAX_ENTRIES", "5000")))
+    except ValueError:
+        max_entries = 5_000
+    return RedisAgentCache(client, prefix or "data-agent:agent-cache:v1", max_entries)
 
 
 def cache_ttl(name: str, default: int) -> int:

@@ -66,6 +66,7 @@ from backend.query_trace import build_query_trace
 from backend.schemas import ChatResponse
 from backend.tools.approvals import init_tool_runtime_schema
 from backend.tools.registry import initialized_registry
+from backend.turn_cache import load_cached_response, response_cache_identity, store_cached_response
 
 
 def init_storage(connection_factory=None):
@@ -724,6 +725,22 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
                     turn["message"]["id"],
                 )
             return cached_chat_response(cached)
+        turn_cache_key = response_cache_identity(
+            x.message, user["id"], "data-query-agent", x.model_id,
+        )
+        cached_turn = load_cached_response(turn_cache_key)
+        if cached_turn:
+            stored = finish_turn(
+                conversation_id=x.session_id,
+                user_id=user["id"],
+                client_message_id=client_message_id,
+                response_payload=cached_turn,
+                tool_result=cached_turn.get("result") if cached_turn.get("sql") else None,
+            )
+            await refresh_memory_after_success(
+                x.message, x.session_id, user["id"], turn["message"]["id"],
+            )
+            return cached_chat_response(stored)
         context = context_for_agent(
             x.session_id,
             user["id"],
@@ -731,6 +748,7 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
         )
         state = await run_agent(x.message, "data-query-agent", context["history"], x.model_id, context["conversation_summary"], context["user_memories"], user["id"], x.session_id, turn["message"]["id"])
         response = response_from_state(state)
+        store_cached_response(turn_cache_key, response, state)
         stored = finish_turn(
             conversation_id=x.session_id,
             user_id=user["id"],
@@ -783,6 +801,10 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
             user["id"],
             exclude_client_message_id=client_message_id,
         )
+        turn_cache_key = response_cache_identity(
+            x.message, user["id"], "data-query-agent", x.model_id,
+        )
+        cached_turn = load_cached_response(turn_cache_key)
     except LookupError as exc:
         raise HTTPException(404, "Conversation not found") from exc
     except ConversationConflictError as exc:
@@ -802,9 +824,26 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
                 payload = terminal_payload(cached)
                 yield sse("error" if cached.get("kind") == "error" else "done", payload)
                 return
+            if cached_turn:
+                stored = finish_turn(
+                    conversation_id=x.session_id,
+                    user_id=user["id"],
+                    client_message_id=client_message_id,
+                    response_payload=cached_turn,
+                    tool_result=cached_turn.get("result") if cached_turn.get("sql") else None,
+                )
+                await refresh_memory_after_success(
+                    x.message, x.session_id, user["id"], turn["message"]["id"],
+                )
+                payload = terminal_payload(stored)
+                yield sse("status", {"label": "已命中完整回答缓存", "node": "turn_cache"})
+                yield sse("delta", {"content": str(payload.get("answer") or "")})
+                yield sse("done", payload)
+                return
             async for item in run_agent_stream(x.message, "data-query-agent", context["history"], x.model_id, context["conversation_summary"], context["user_memories"], user["id"], x.session_id, turn["message"]["id"]):
                 if item["event"] == "done":
                     response = response_from_state(item["state"])
+                    store_cached_response(turn_cache_key, response, item["state"])
                     stored = finish_turn(
                         conversation_id=x.session_id,
                         user_id=user["id"],
