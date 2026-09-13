@@ -71,6 +71,14 @@ async function run(browser, viewport) {
   try {
     await page.goto(baseURL);
     await bottom();
+    const dockStyle = await page.locator('.chat-docked').evaluate(element => ({
+      zIndex: getComputedStyle(element).zIndex,
+      surface: getComputedStyle(element, '::before').backgroundImage,
+      surfaceBottom: getComputedStyle(element, '::before').bottom,
+    }));
+    assert.equal(dockStyle.zIndex, '3');
+    assert.match(dockStyle.surface, /linear-gradient/);
+    assert.equal(dockStyle.surfaceBottom, '-17px');
     assert.ok((await metrics()).top > 1000);
     await page.reload();
     await bottom();
@@ -95,6 +103,9 @@ async function run(browser, viewport) {
     await bottom();
     await scrollUp();
     const before = await metrics();
+    if (process.env.SCROLL_TEST_SCREENSHOT && viewport.width > 700) {
+      await page.screenshot({ path: process.env.SCROLL_TEST_SCREENSHOT });
+    }
     await page.evaluate(() => window.pushChatEvent('delta', { content: '新增内容。'.repeat(900) }));
     await page.waitForTimeout(150);
     assert.ok(Math.abs((await metrics()).top - before.top) < 3, 'Streaming pulled reader away from history');
