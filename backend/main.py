@@ -5,7 +5,7 @@ import os
 import uuid
 import httpx
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -67,6 +67,7 @@ from backend.schemas import ChatResponse
 from backend.tools.approvals import init_tool_runtime_schema
 from backend.tools.registry import initialized_registry
 from backend.turn_cache import load_cached_response, response_cache_identity, store_cached_response
+from backend.summary_background import summarize_after_response
 
 
 def init_storage(connection_factory=None):
@@ -688,6 +689,7 @@ async def refresh_memory_after_success(
     user_id: str,
     source_message_id: str | None = None,
     memory_actions: list[dict] | None = None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> None:
     """Persist only after a successful turn; failed model calls never create memories."""
 
@@ -702,10 +704,13 @@ async def refresh_memory_after_success(
     # declare an action (for example a provider with weak structured output).
     if not outcomes:
         remember_explicit_request(message, user_id, conversation_id, source_message_id)
-    await compact_conversation_if_needed(conversation_id, user_id)
+    if background_tasks is not None:
+        background_tasks.add_task(summarize_after_response, conversation_id, user_id)
+    else:
+        await compact_conversation_if_needed(conversation_id, user_id)
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
+async def chat(x: ChatIn, request: Request, background_tasks: BackgroundTasks, user: dict = Depends(require_user)):
     client_message_id = x.client_message_id or str(uuid.uuid4())
     try:
         ensure_conversation(x.session_id, user["id"])
@@ -723,10 +728,13 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
                     x.session_id,
                     user["id"],
                     turn["message"]["id"],
+                    background_tasks=background_tasks,
                 )
             return cached_chat_response(cached)
+        context = context_for_agent(x.session_id, user["id"], exclude_client_message_id=client_message_id)
         turn_cache_key = response_cache_identity(
             x.message, user["id"], "data-query-agent", x.model_id,
+            context=context,
         )
         cached_turn = load_cached_response(turn_cache_key)
         if cached_turn:
@@ -739,13 +747,9 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
             )
             await refresh_memory_after_success(
                 x.message, x.session_id, user["id"], turn["message"]["id"],
+                background_tasks=background_tasks,
             )
             return cached_chat_response(stored)
-        context = context_for_agent(
-            x.session_id,
-            user["id"],
-            exclude_client_message_id=client_message_id,
-        )
         state = await run_agent(x.message, "data-query-agent", context["history"], x.model_id, context["conversation_summary"], context["user_memories"], user["id"], x.session_id, turn["message"]["id"])
         response = response_from_state(state)
         store_cached_response(turn_cache_key, response, state)
@@ -762,6 +766,7 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
             user["id"],
             turn["message"]["id"],
             state.get("memory_actions"),
+            background_tasks=background_tasks,
         )
         return cached_chat_response(stored)
     except LookupError as exc:
@@ -784,7 +789,7 @@ async def chat(x: ChatIn, request: Request, user: dict = Depends(require_user)):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_user)):
+async def chat_stream(x: ChatIn, request: Request, background_tasks: BackgroundTasks, user: dict = Depends(require_user)):
     request_id = request.state.request_id
     client_message_id = x.client_message_id or str(uuid.uuid4())
     try:
@@ -803,6 +808,7 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
         )
         turn_cache_key = response_cache_identity(
             x.message, user["id"], "data-query-agent", x.model_id,
+            context=context,
         )
         cached_turn = load_cached_response(turn_cache_key)
     except LookupError as exc:
@@ -820,6 +826,7 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
                         x.session_id,
                         user["id"],
                         turn["message"]["id"],
+                        background_tasks=background_tasks,
                     )
                 payload = terminal_payload(cached)
                 yield sse("error" if cached.get("kind") == "error" else "done", payload)
@@ -834,6 +841,7 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
                 )
                 await refresh_memory_after_success(
                     x.message, x.session_id, user["id"], turn["message"]["id"],
+                    background_tasks=background_tasks,
                 )
                 payload = terminal_payload(stored)
                 yield sse("status", {"label": "已命中完整回答缓存", "node": "turn_cache"})
@@ -857,6 +865,7 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
                         user["id"],
                         turn["message"]["id"],
                         item["state"].get("memory_actions"),
+                        background_tasks=background_tasks,
                     )
                     payload = terminal_payload(stored)
                     yield sse("error" if stored.get("kind") == "error" else "done", payload)
@@ -878,4 +887,4 @@ async def chat_stream(x: ChatIn, request: Request, user: dict = Depends(require_
         finally:
             finish_request(token)
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(events(), background=background_tasks, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
