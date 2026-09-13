@@ -9,6 +9,7 @@ import ManagedSkillsPanel from './pages/extensions/SkillsPanel.jsx';
 import ToolApprovalCard, { PermissionDeniedCard } from './components/chat/ToolApprovalCard.jsx';
 import MessageText from './components/chat/MessageText.jsx';
 import QueryTraceDetails from './components/chat/QueryTraceDetails.jsx';
+import useConversationScroll from './components/chat/useConversationScroll.js';
 import './styles.css';
 
 const nav = [
@@ -53,8 +54,10 @@ function Composer({ onSend, busy }) {
 
 function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConversation, onConversationChanged }) {
   const [busy, setBusy] = useState(false);
+  const { pageRef, followLatest } = useConversationScroll(session, messages);
   const send = async text => {
     const message = text.trim(); if (!message || busy) return;
+    followLatest();
     const clientMessageId = crypto.randomUUID();
     setBusy(true); setMessages(items => [...items, { id: clientMessageId, role: 'user', text: message, clientMessageId }]); onFirstMessage(message);
     let assistantStarted = false;
@@ -107,7 +110,7 @@ function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConvers
     }
     finally { setBusy(false); onConversationChanged?.(); }
   };
-  return <section className="chat-page">
+  return <section className="chat-page" ref={pageRef}>
     {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={item.id || item.clientMessageId || index}>{item.text}</div> : <AssistantAnswer key={item.id || index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
   </section>;
 }
