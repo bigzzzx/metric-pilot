@@ -231,6 +231,78 @@ def get_knowledge_document(
         connection.close()
 
 
+def delete_knowledge_document_record(
+    document_id: str,
+    knowledge_base_id: str,
+    owner_id: str | None,
+    *,
+    connection_factory: ConnectionFactory = db,
+) -> dict[str, Any]:
+    """Delete one owned document and its SQLite chunks atomically."""
+    init_knowledge_schema(connection_factory)
+    connection = connection_factory()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if _writable_base(connection, knowledge_base_id, owner_id) is None:
+            raise LookupError("Knowledge base not found")
+        row = connection.execute(
+            "SELECT * FROM knowledge_documents WHERE id=? AND knowledge_base_id=?",
+            (document_id, knowledge_base_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Knowledge document not found")
+        document = _document_dict(row)
+        if document["status"] == "processing":
+            raise RuntimeError("knowledge_document_processing")
+        connection.execute("DELETE FROM knowledge_chunks WHERE document_id=?", (document_id,))
+        connection.execute("DELETE FROM knowledge_documents WHERE id=?", (document_id,))
+        connection.commit()
+        return document
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def delete_knowledge_base_record(
+    knowledge_base_id: str,
+    owner_id: str | None,
+    *,
+    connection_factory: ConnectionFactory = db,
+) -> list[dict[str, Any]]:
+    """Delete an owned knowledge base, documents and SQLite chunks atomically."""
+    init_knowledge_schema(connection_factory)
+    connection = connection_factory()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if _writable_base(connection, knowledge_base_id, owner_id) is None:
+            raise LookupError("Knowledge base not found")
+        rows = connection.execute(
+            "SELECT * FROM knowledge_documents WHERE knowledge_base_id=?",
+            (knowledge_base_id,),
+        ).fetchall()
+        documents = [_document_dict(row) for row in rows]
+        if any(document["status"] == "processing" for document in documents):
+            raise RuntimeError("knowledge_document_processing")
+        document_ids = [document["id"] for document in documents]
+        if document_ids:
+            placeholders = ",".join("?" for _ in document_ids)
+            connection.execute(
+                f"DELETE FROM knowledge_chunks WHERE document_id IN ({placeholders})",
+                document_ids,
+            )
+        connection.execute("DELETE FROM knowledge_documents WHERE knowledge_base_id=?", (knowledge_base_id,))
+        connection.execute("DELETE FROM knowledge_bases WHERE id=?", (knowledge_base_id,))
+        connection.commit()
+        return documents
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def find_ready_document_by_hash(
     knowledge_base_id: str,
     owner_id: str | None,

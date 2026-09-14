@@ -27,7 +27,10 @@ export default function McpPanel({ canManage = false }) {
     const values = await jsonRequest('/api/mcp-servers');
     if (!Array.isArray(values)) throw new Error('MCP Server 接口返回格式不正确');
     setServers(values);
-    setServerId(current => preferred || current || values[0]?.id || '');
+    setServerId(current => {
+      const candidate = preferred || current;
+      return values.some(item => item.id === candidate) ? candidate : values[0]?.id || '';
+    });
   };
   const loadTools = async id => {
     const request = ++toolRequest.current;
@@ -101,6 +104,18 @@ export default function McpPanel({ canManage = false }) {
     } catch (error) { setNotice(`工具更新失败：${error.message}`); }
   };
 
+  const removeServer = async () => {
+    if (!draft.id || !canManage || busy) return;
+    if (!window.confirm(`确定永久删除 MCP Server“${draft.name}”吗？已发现工具和所有 Agent 绑定也会一并删除。`)) return;
+    setBusy(true); setNotice('');
+    try {
+      const deleted = await jsonRequest(`/api/mcp-servers/${draft.id}`, { method: 'DELETE' });
+      setServerId(''); setTools([]);
+      await loadServers();
+      setNotice(`MCP Server“${deleted.name || draft.name}”已删除，并解除 ${deleted.updated_agent_count || 0} 个 Agent 绑定。`);
+    } catch (error) { setNotice(`删除失败：${error.message}`); } finally { setBusy(false); }
+  };
+
   return <div className="extension-page extension-management">
     <div className="extension-title-row"><div><h2>MCP</h2><p className="page-subtitle">管理 MCP Server，并自动发现、配置和启用其工具。</p></div>{canManage && <button className="outline-button" onClick={() => { setServerId(''); setDraft(emptyServer); setTools([]); }}>＋ 添加 Server</button>}</div>
     {!canManage && <p className="page-subtitle">当前账号仅可查看 MCP 配置；请联系平台管理员申请管理权限。</p>}
@@ -122,7 +137,7 @@ export default function McpPanel({ canManage = false }) {
             <label>超时（秒）<input type="number" min="3" max="300" value={draft.timeout_seconds} onChange={event => setDraft({ ...draft, timeout_seconds: Number(event.target.value) })} /></label>
             <label className="wide">访问凭据<input type="password" value={draft.api_key || ''} onChange={event => setDraft({ ...draft, api_key: event.target.value })} placeholder={draft.credential_configured ? '留空保留已有凭据' : 'Bearer Token（可选）'} /></label>
           </fieldset>
-          {hasUnsavedChanges && <p className="page-subtitle">配置已修改，请先保存后再测试或刷新工具。</p>}<div className="extension-actions">{canManage && <button disabled={busy}>保存配置</button>}{draft.id && canManage && <><button type="button" className="outline-button" disabled={busy || hasUnsavedChanges} onClick={() => serverAction('test')}>测试连接</button><button type="button" className="outline-button" disabled={busy || hasUnsavedChanges || !draft.enabled} onClick={() => serverAction('sync')}>刷新工具</button></>}</div>
+          {hasUnsavedChanges && <p className="page-subtitle">配置已修改，请先保存后再测试或刷新工具。</p>}<div className="extension-actions">{canManage && <button disabled={busy}>保存配置</button>}{draft.id && canManage && <><button type="button" className="outline-button" disabled={busy || hasUnsavedChanges} onClick={() => serverAction('test')}>测试连接</button><button type="button" className="outline-button" disabled={busy || hasUnsavedChanges || !draft.enabled} onClick={() => serverAction('sync')}>刷新工具</button><button type="button" className="danger-button" disabled={busy} onClick={removeServer}>删除 Server</button></>}</div>
         </form>
         {draft.id && <section className="managed-items">
           <div className="managed-items-heading"><div><h3>已发现工具</h3><p>{tools.length} 个工具；发现后默认启用，仅对绑定该 Server 或工具的 Agent 可用。</p></div><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索工具" /></div>

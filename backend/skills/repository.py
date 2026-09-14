@@ -10,6 +10,14 @@ from backend.core import db
 ConnectionFactory = Callable[[], Any]
 
 
+def _id_list(raw: Any) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
 def init_skill_schema(connection: Any) -> None:
     columns = {row["name"] for row in connection.execute("PRAGMA table_info(skills)")}
     additions = {
@@ -200,6 +208,48 @@ def update_skill(skill_id: str, values: dict[str, Any], connection_factory: Conn
     finally:
         connection.close()
     return get_skill(skill_id, connection_factory)
+
+
+def delete_skill(
+    skill_id: str, connection_factory: ConnectionFactory = db
+) -> dict[str, Any] | None:
+    """Permanently delete a Skill, its versions, and all Agent bindings."""
+    connection = connection_factory()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        skill = connection.execute(
+            "SELECT id,name FROM skills WHERE id=?", (skill_id,)
+        ).fetchone()
+        if skill is None:
+            connection.rollback()
+            return None
+        affected_agents = 0
+        for agent in connection.execute("SELECT id,skills FROM agents").fetchall():
+            bindings = _id_list(agent["skills"])
+            next_bindings = [item for item in bindings if item != skill_id]
+            if next_bindings != bindings:
+                connection.execute(
+                    "UPDATE agents SET skills=? WHERE id=?",
+                    (json.dumps(next_bindings, ensure_ascii=False), agent["id"]),
+                )
+                affected_agents += 1
+        version_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM skill_versions WHERE skill_id=?", (skill_id,)
+        ).fetchone()["count"]
+        connection.execute("DELETE FROM skill_versions WHERE skill_id=?", (skill_id,))
+        connection.execute("DELETE FROM skills WHERE id=?", (skill_id,))
+        connection.commit()
+        return {
+            "id": skill_id,
+            "name": skill["name"],
+            "deleted_version_count": int(version_count),
+            "updated_agent_count": affected_agents,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def list_versions(skill_id: str, connection_factory: ConnectionFactory = db) -> list[dict[str, Any]]:

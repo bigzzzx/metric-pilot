@@ -13,7 +13,10 @@ function documentStatus(document) {
   return { status, label: labels[status] || status };
 }
 
-export default function DocumentList({ documents = [], loading = false, error = '', onRetry }) {
+export default function DocumentList({
+  documents = [], loading = false, error = '', onRetry,
+  canDelete = false, deletingId = '', onDelete,
+}) {
   return <section className="document-list">
     <h3>已导入文档</h3>
     {loading && <p role="status">正在加载文档…</p>}
@@ -22,7 +25,7 @@ export default function DocumentList({ documents = [], loading = false, error = 
       const { status, label } = documentStatus(document);
       const warnings = Array.isArray(document.warnings) ? document.warnings : [];
       return <article className="document-item" key={document.id || document.document_id || `${document.name}-${document.created_at}`}>
-        <div className="document-item-heading"><b>{document.name || document.filename || '未命名文档'}</b><em className={`document-status ${status}`}>{label}</em></div>
+        <div className="document-item-heading"><b>{document.name || document.filename || '未命名文档'}</b><div className="document-item-actions"><em className={`document-status ${status}`}>{label}</em>{canDelete && <button type="button" className="danger-link" disabled={deletingId === document.id || status === 'processing'} onClick={() => onDelete?.(document)}>{deletingId === document.id ? '删除中…' : '删除'}</button>}</div></div>
         <span>{[
           document.source_type || document.mime_type,
           document.parser,

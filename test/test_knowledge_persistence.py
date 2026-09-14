@@ -535,6 +535,50 @@ def test_reconciler_cleans_stale_processing_idempotently(tmp_path, monkeypatch):
     assert deleted == [document["id"]]
 
 
+def test_delete_document_removes_sqlite_chunks_vector_and_source(tmp_path, monkeypatch):
+    factory = _factory(tmp_path / "delete-document.db")
+    _seed_base(factory)
+    storage = SourceStorage(tmp_path / "uploads")
+    stored = storage.store(
+        owner_id="user-1", knowledge_base_id="kb-1", document_id="doc-delete",
+        filename="delete.txt", data=b"delete me",
+    )
+    connection = factory()
+    connection.execute(
+        """INSERT INTO knowledge_documents(
+            id,knowledge_base_id,name,source_type,chunk_count,status,storage_path,updated_at
+        ) VALUES (?,?,?,?,1,'ready',?,CURRENT_TIMESTAMP)""",
+        ("doc-delete", "kb-1", "delete.txt", "txt", stored.storage_path),
+    )
+    connection.execute(
+        """INSERT INTO knowledge_chunks(
+            id,document_id,chunk_index,content,embedding,embedding_content
+        ) VALUES ('chunk-delete','doc-delete',0,'delete me','[1.0]','delete me')"""
+    )
+    connection.commit(); connection.close()
+    vector_deletes = []
+    monkeypatch.setattr("backend.knowledge.indexer.using_milvus", lambda: True)
+    monkeypatch.setattr("backend.knowledge.indexer.delete_document_chunks", vector_deletes.append)
+    indexer = KnowledgeDocumentIndexer(
+        connection_factory=factory,
+        ingestion_service=_ReadyService(),
+        source_storage=storage,
+        reconcile_on_startup=False,
+    )
+
+    deleted = indexer.delete_document(
+        knowledge_base_id="kb-1", document_id="doc-delete", owner_id="user-1"
+    )
+
+    assert deleted["id"] == "doc-delete"
+    assert vector_deletes == ["doc-delete"]
+    assert not (storage.root.parent / stored.storage_path).exists()
+    connection = factory()
+    assert connection.execute("SELECT COUNT(*) FROM knowledge_documents").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0] == 0
+    connection.close()
+
+
 def test_all_three_knowledge_retrieval_paths_exclude_non_ready_documents(tmp_path, monkeypatch):
     factory = _factory(tmp_path / "ready-only.db")
     _seed_base(factory)

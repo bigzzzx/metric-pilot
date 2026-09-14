@@ -17,7 +17,11 @@ from backend.knowledge.repository import (
     claim_processing_document,
     claim_stale_processing_documents,
     complete_stale_processing_cleanup,
+    delete_knowledge_base_record,
+    delete_knowledge_document_record,
+    get_knowledge_document,
     init_knowledge_schema,
+    list_knowledge_documents,
     mark_document_status,
     persist_ready_document,
     set_document_storage_path,
@@ -166,6 +170,59 @@ class KnowledgeDocumentIndexer:
                 raise RuntimeError("Embedding batch exceeded its hard limit")
             vectors.extend(embed_texts(batch))
         return vectors
+
+    def delete_document(
+        self, *, knowledge_base_id: str, document_id: str, owner_id: str | None
+    ) -> dict[str, Any]:
+        """Remove searchable vectors before durable metadata and source bytes."""
+        document = get_knowledge_document(
+            document_id, owner_id, connection_factory=self.connection_factory
+        )
+        if document["knowledge_base_id"] != knowledge_base_id:
+            raise LookupError("Document is outside this knowledge base")
+        assert_writable_knowledge_base(
+            knowledge_base_id, owner_id, connection_factory=self.connection_factory
+        )
+        if document["status"] == "processing":
+            raise RuntimeError("knowledge_document_processing")
+        if using_milvus():
+            delete_document_chunks(document_id)
+        deleted = delete_knowledge_document_record(
+            document_id,
+            knowledge_base_id,
+            owner_id,
+            connection_factory=self.connection_factory,
+        )
+        try:
+            self.source_storage.remove(str(deleted.get("storage_path") or ""))
+        except (OSError, ValueError):
+            pass
+        return deleted
+
+    def delete_knowledge_base(
+        self, *, knowledge_base_id: str, owner_id: str | None
+    ) -> dict[str, Any]:
+        """Remove an owned knowledge base and every external index entry."""
+        documents = list_knowledge_documents(
+            knowledge_base_id, owner_id, connection_factory=self.connection_factory
+        )
+        assert_writable_knowledge_base(
+            knowledge_base_id, owner_id, connection_factory=self.connection_factory
+        )
+        if any(document["status"] == "processing" for document in documents):
+            raise RuntimeError("knowledge_document_processing")
+        if using_milvus():
+            for document in documents:
+                delete_document_chunks(str(document["id"]))
+        deleted = delete_knowledge_base_record(
+            knowledge_base_id, owner_id, connection_factory=self.connection_factory
+        )
+        for document in deleted:
+            try:
+                self.source_storage.remove(str(document.get("storage_path") or ""))
+            except (OSError, ValueError):
+                pass
+        return {"id": knowledge_base_id, "deleted_document_count": len(deleted)}
 
     def _claim(
         self,

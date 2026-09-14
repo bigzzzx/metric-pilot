@@ -11,6 +11,14 @@ from backend.core import db, secrets
 ConnectionFactory = Callable[[], Any]
 
 
+def _id_list(raw: Any) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
 def init_mcp_schema(connection: Any) -> None:
     server_columns = {row["name"] for row in connection.execute("PRAGMA table_info(mcp_servers)")}
     additions = {
@@ -184,6 +192,61 @@ def update_server(server_id: str, values: dict[str, Any], connection_factory: Co
     finally:
         connection.close()
     return get_server(server_id, connection_factory=connection_factory)
+
+
+def delete_server(
+    server_id: str, connection_factory: ConnectionFactory = db
+) -> dict[str, Any] | None:
+    """Delete a server and remove all stale Agent and runtime identifiers."""
+    connection = connection_factory()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        server = connection.execute(
+            "SELECT id,name FROM mcp_servers WHERE id=?", (server_id,)
+        ).fetchone()
+        if server is None:
+            connection.rollback()
+            return None
+        tool_ids = [
+            str(row["id"])
+            for row in connection.execute(
+                "SELECT id FROM mcp_tools WHERE server_id=?", (server_id,)
+            ).fetchall()
+        ]
+        tool_set = set(tool_ids)
+        affected_agents = 0
+        for agent in connection.execute(
+            "SELECT id,mcp_servers,mcp_tools FROM agents"
+        ).fetchall():
+            servers = _id_list(agent["mcp_servers"])
+            tools = _id_list(agent["mcp_tools"])
+            next_servers = [item for item in servers if item != server_id]
+            next_tools = [item for item in tools if item not in tool_set]
+            if next_servers != servers or next_tools != tools:
+                connection.execute(
+                    "UPDATE agents SET mcp_servers=?,mcp_tools=? WHERE id=?",
+                    (
+                        json.dumps(next_servers, ensure_ascii=False),
+                        json.dumps(next_tools, ensure_ascii=False),
+                        agent["id"],
+                    ),
+                )
+                affected_agents += 1
+        connection.execute("DELETE FROM mcp_tools WHERE server_id=?", (server_id,))
+        connection.execute("DELETE FROM mcp_servers WHERE id=?", (server_id,))
+        connection.commit()
+        return {
+            "id": server_id,
+            "name": server["name"],
+            "tool_ids": tool_ids,
+            "deleted_tool_count": len(tool_ids),
+            "updated_agent_count": affected_agents,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def record_server_status(

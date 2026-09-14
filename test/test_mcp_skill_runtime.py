@@ -13,9 +13,9 @@ from pydantic import ValidationError
 from backend.api.tools import _resume_mcp_approval
 from backend.main import init_storage
 from backend.mcp.client import discover_server
-from backend.mcp.repository import create_server, replace_discovered_tools, update_tool
+from backend.mcp.repository import create_server, delete_server, replace_discovered_tools, update_tool
 from backend.mcp.runtime import _input_model
-from backend.skills.repository import create_skill, selected_skill_context, update_skill
+from backend.skills.repository import create_skill, delete_skill, selected_skill_context, update_skill
 from backend.tools.approvals import decide_approval, get_approval
 from backend.tools.async_executor import AsyncToolExecutor
 from backend.tools.models import HighRiskOperationInput, HighRiskOperationOutput, RiskLevel, ToolExecutionContext, ToolSpec
@@ -113,6 +113,62 @@ def test_skill_requires_binding_and_keeps_version_history(tmp_path):
     assert archived["archived"] is True
     connection = factory()
     assert json.loads(connection.execute("SELECT skills FROM agents WHERE id='data-query-agent'").fetchone()["skills"]) == []
+    connection.close()
+
+
+def test_delete_mcp_server_removes_tools_and_agent_bindings(tmp_path):
+    factory = _factory(tmp_path / "delete-mcp.db")
+    init_storage(factory)
+    server = create_server(
+        name="delete-me", description="", transport="streamable-http",
+        endpoint="http://127.0.0.1:18765/mcp", auth_type="none", api_key="",
+        timeout_seconds=10, enabled=True, connection_factory=factory,
+    )
+    tools = replace_discovered_tools(server["id"], [
+        {"name": "lookup", "inputSchema": {"type": "object"}},
+        {"name": "write", "inputSchema": {"type": "object"}},
+    ], factory)
+    connection = factory()
+    connection.execute(
+        "INSERT INTO agents(id,name,description,model_id,tools,system_prompt,enabled,mcp_servers,mcp_tools,skills) VALUES (?,?,?,?,?,?,1,?,?,?)",
+        ("delete-agent", "Delete", "", "m1", "[]", "", json.dumps([server["id"]]), json.dumps([tools[0]["id"]]), "[]"),
+    )
+    connection.commit(); connection.close()
+
+    result = delete_server(server["id"], factory)
+
+    assert result["deleted_tool_count"] == 2
+    connection = factory()
+    assert connection.execute("SELECT COUNT(*) FROM mcp_servers").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM mcp_tools").fetchone()[0] == 0
+    agent = connection.execute("SELECT mcp_servers,mcp_tools FROM agents WHERE id='delete-agent'").fetchone()
+    assert json.loads(agent["mcp_servers"]) == []
+    assert json.loads(agent["mcp_tools"]) == []
+    connection.close()
+
+
+def test_delete_skill_removes_versions_and_agent_bindings(tmp_path):
+    factory = _factory(tmp_path / "delete-skill.db")
+    init_storage(factory)
+    skill = create_skill(
+        name="delete-me", description="", instructions="rule",
+        applicability="", tags=[], connection_factory=factory,
+    )
+    update_skill(skill["id"], {"instructions": "rule v2"}, factory)
+    connection = factory()
+    connection.execute(
+        "INSERT INTO agents(id,name,description,model_id,tools,system_prompt,enabled,mcp_servers,mcp_tools,skills) VALUES (?,?,?,?,?,?,1,'[]','[]',?)",
+        ("delete-skill-agent", "Delete", "", "m1", "[]", "", json.dumps([skill["id"]])),
+    )
+    connection.commit(); connection.close()
+
+    result = delete_skill(skill["id"], factory)
+
+    assert result["deleted_version_count"] == 2
+    connection = factory()
+    assert connection.execute("SELECT COUNT(*) FROM skills").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM skill_versions").fetchone()[0] == 0
+    assert json.loads(connection.execute("SELECT skills FROM agents WHERE id='delete-skill-agent'").fetchone()["skills"]) == []
     connection.close()
 
 

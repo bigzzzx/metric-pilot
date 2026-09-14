@@ -256,6 +256,33 @@ async def create_knowledge_base(payload: KnowledgeBaseCreate, user: dict = Depen
     return {**created, "can_write": True}
 
 
+@router.delete("/{knowledge_base_id}")
+async def delete_knowledge_base(
+    knowledge_base_id: str,
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    try:
+        return await run_in_threadpool(
+            get_document_indexer().delete_knowledge_base,
+            knowledge_base_id=knowledge_base_id,
+            owner_id=user["id"],
+        )
+    except LookupError:
+        return _lookup_error(request)
+    except RuntimeError as error:
+        if str(error) == "knowledge_document_processing":
+            return _error_response(
+                request,
+                status_code=409,
+                code="knowledge_document_processing",
+                message="知识库中仍有文档正在处理，请等待处理完成后再删除。",
+            )
+        raise
+    except (VectorStoreError, OSError) as error:
+        return _service_error(request, error)
+
+
 @router.get("/{knowledge_base_id}/documents", response_model=list[KnowledgeDocumentView])
 async def knowledge_documents(
     knowledge_base_id: str,
@@ -283,6 +310,36 @@ async def knowledge_document(
         return _normalise_document(document)
     except LookupError:
         return _lookup_error(request)
+
+
+@router.delete("/{knowledge_base_id}/documents/{document_id}")
+async def delete_knowledge_document(
+    knowledge_base_id: str,
+    document_id: str,
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    try:
+        deleted = await run_in_threadpool(
+            get_document_indexer().delete_document,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+            owner_id=user["id"],
+        )
+        return {"id": deleted["id"], "knowledge_base_id": knowledge_base_id}
+    except LookupError:
+        return _lookup_error(request)
+    except RuntimeError as error:
+        if str(error) == "knowledge_document_processing":
+            return _error_response(
+                request,
+                status_code=409,
+                code="knowledge_document_processing",
+                message="文档正在处理，请等待处理完成后再删除。",
+            )
+        raise
+    except (VectorStoreError, OSError) as error:
+        return _service_error(request, error)
 
 
 @router.post("/{knowledge_base_id}/documents", response_model=KnowledgeImportResponse)

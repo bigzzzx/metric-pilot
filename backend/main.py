@@ -45,12 +45,12 @@ from backend.http_limits import UploadBodyLimitMiddleware
 from backend.extensions import create_mcp_server, create_skill, list_mcp_servers, list_skills, tools as extension_tools
 from backend.mcp.client import McpUnavailable, discover_server
 from backend.mcp.repository import (
-    create_server, init_mcp_schema, list_tools as list_mcp_tools,
+    create_server, delete_server, init_mcp_schema, list_tools as list_mcp_tools,
     record_server_status, replace_discovered_tools, update_server, update_tool,
 )
 from backend.mcp.runtime import register_mcp_tools
 from backend.skills.repository import (
-    create_skill as create_managed_skill, init_skill_schema, list_versions,
+    create_skill as create_managed_skill, delete_skill, init_skill_schema, list_versions,
     update_skill,
 )
 from backend.auth import SESSION_COOKIE, create_session, current_user, hash_password, require_user, revoke_session, verify_password
@@ -390,6 +390,15 @@ def edit_skill(skill_id: str, payload: SkillIn, user: dict = Depends(require_use
     return result
 
 
+@app.delete("/api/skills/{skill_id}")
+def remove_skill(skill_id: str, user: dict = Depends(require_user)):
+    require_platform_admin(user["id"])
+    result = delete_skill(skill_id)
+    if not result:
+        raise HTTPException(404, "Skill not found")
+    return result
+
+
 @app.get("/api/skills/{skill_id}/versions")
 def skill_versions(skill_id: str, _user: dict = Depends(require_user)):
     return list_versions(skill_id)
@@ -411,6 +420,18 @@ def edit_mcp_server(server_id: str, payload: McpServerIn, user: dict = Depends(r
     require_platform_admin(user["id"])
     result = update_server(server_id, payload.model_dump())
     if not result: raise HTTPException(404, "MCP Server not found")
+    return result
+
+
+@app.delete("/api/mcp-servers/{server_id}")
+def remove_mcp_server(server_id: str, user: dict = Depends(require_user)):
+    require_platform_admin(user["id"])
+    result = delete_server(server_id)
+    if not result:
+        raise HTTPException(404, "MCP Server not found")
+    registry = initialized_registry()
+    for tool_id in result["tool_ids"]:
+        registry.remove(tool_id)
     return result
 
 

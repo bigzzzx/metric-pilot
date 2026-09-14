@@ -67,8 +67,22 @@ export function createKnowledgeBase({ name, description }, options = {}) {
   });
 }
 
+export function deleteKnowledgeBase(knowledgeBaseId, options = {}) {
+  return requestJson(`/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`, {
+    method: 'DELETE',
+    ...options,
+  });
+}
+
 export function listKnowledgeDocuments(knowledgeBaseId, options = {}) {
   return requestJson(`/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`, options);
+}
+
+export function deleteKnowledgeDocument(knowledgeBaseId, documentId, options = {}) {
+  return requestJson(
+    `/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents/${encodeURIComponent(documentId)}`,
+    { method: 'DELETE', ...options },
+  );
 }
 
 export function importKnowledgeText(knowledgeBaseId, { name, content, sourceType = 'text' }, options = {}) {

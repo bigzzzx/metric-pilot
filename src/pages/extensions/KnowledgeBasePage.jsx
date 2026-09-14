@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   createKnowledgeBase,
+  deleteKnowledgeBase,
+  deleteKnowledgeDocument,
   listKnowledgeBases,
   listKnowledgeDocuments,
   presentKnowledgeError,
@@ -37,6 +39,8 @@ export default function KnowledgeBasePage() {
   const [creating, setCreating] = useState(false);
   const [loadingBases, setLoadingBases] = useState(true);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [deletingBase, setDeletingBase] = useState(false);
+  const [deletingDocumentId, setDeletingDocumentId] = useState('');
   const baseRequest = useRef({ sequence: 0, controller: null });
   const documentRequest = useRef({ sequence: 0, controller: null });
   const selectedIdRef = useRef(selectedId);
@@ -130,6 +134,39 @@ export default function KnowledgeBasePage() {
     else if (!['failed', 'error'].includes(String(result.status).toLowerCase())) setNotice('文档处理结果已更新。');
   };
 
+  const removeDocument = async document => {
+    const name = document.name || document.filename || '未命名文档';
+    if (!window.confirm(`确定永久删除文档“${name}”吗？其切片和向量索引也会一并删除。`)) return;
+    setDeletingDocumentId(document.id); setNotice('');
+    try {
+      await deleteKnowledgeDocument(selectedId, document.id);
+      await Promise.all([loadDocuments(selectedId), loadBases()]);
+      setNotice(`文档“${name}”已删除。`);
+    } catch (error) {
+      setNotice(`删除失败：${presentKnowledgeError(error)}`);
+    } finally {
+      setDeletingDocumentId('');
+    }
+  };
+
+  const removeBase = async () => {
+    if (!selected || !selectedCanWrite) return;
+    if (!window.confirm(`确定永久删除知识库“${selected.name}”吗？其中 ${documents.length} 个文档、切片和向量索引都会一并删除。`)) return;
+    setDeletingBase(true); setNotice('');
+    try {
+      await deleteKnowledgeBase(selected.id);
+      selectedIdRef.current = '';
+      setSelectedId('');
+      setDocuments([]);
+      await loadBases();
+      setNotice(`知识库“${selected.name}”已删除。`);
+    } catch (error) {
+      setNotice(`删除失败：${presentKnowledgeError(error)}`);
+    } finally {
+      setDeletingBase(false);
+    }
+  };
+
   const selected = bases.find(base => base.id === selectedId);
   const selectedCanWrite = canWrite(selected);
   return <div className="extension-page">
@@ -140,11 +177,11 @@ export default function KnowledgeBasePage() {
     <div className="knowledge-layout">
       <aside className="kb-list">{bases.map(base => <button type="button" key={base.id} className={base.id === selectedId ? 'active' : ''} onClick={() => { selectedIdRef.current = base.id; setSelectedId(base.id); }}><b>{base.name}</b><span>{base.document_count || 0} 个文档 · {canWrite(base) ? '可写' : '只读'} · 混合检索</span></button>)}</aside>
       <div className="kb-detail">{selected ? <>
-        <div className="kb-detail-heading"><div><h2>{selected.name}</h2><p>{selected.description || '未填写说明'}</p></div><span className="index-badge">BGE · BM25 · Rerank</span></div>
+        <div className="kb-detail-heading"><div><h2>{selected.name}</h2><p>{selected.description || '未填写说明'}</p></div><div className="kb-heading-actions"><span className="index-badge">BGE · BM25 · Rerank</span>{selectedCanWrite && <button type="button" className="danger-button" disabled={deletingBase} onClick={removeBase}>{deletingBase ? '删除中…' : '删除知识库'}</button>}</div></div>
         {selectedCanWrite
           ? <KnowledgeUploader key={selectedId} knowledgeBaseId={selectedId} onImported={refreshAfterImport} />
           : <div className="knowledge-readonly" role="note"><b>只读知识库</b><span>你可以检索和查看这里的文档，但不能向共享知识库上传内容。请新建个人知识库后导入文件。</span></div>}
-        <DocumentList documents={documents} loading={loadingDocuments} error={documentError} onRetry={() => loadDocuments(selectedId)} />
+        <DocumentList documents={documents} loading={loadingDocuments} error={documentError} onRetry={() => loadDocuments(selectedId)} canDelete={selectedCanWrite} deletingId={deletingDocumentId} onDelete={removeDocument} />
       </> : !pageError && <p>{loadingBases ? '正在加载知识库…' : bases.length ? '请选择知识库。' : '还没有知识库，请先新建一个。'}</p>}</div>
     </div>
   </div>;

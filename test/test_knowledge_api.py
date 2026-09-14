@@ -247,6 +247,42 @@ def test_document_lookup_does_not_leak_across_users(monkeypatch):
     assert "not owned" not in response.text
 
 
+def test_delete_document_passes_authenticated_owner_to_indexer(monkeypatch):
+    captured = {}
+
+    class FakeIndexer:
+        def delete_document(self, **kwargs):
+            captured.update(kwargs)
+            return _document(id=kwargs["document_id"])
+
+    monkeypatch.setattr(knowledge_api, "get_document_indexer", lambda: FakeIndexer())
+    app = _app(monkeypatch)
+    with TestClient(app) as client:
+        response = client.delete("/api/knowledge-bases/base-1/documents/document-1")
+
+    assert response.status_code == 200
+    assert captured == {
+        "knowledge_base_id": "base-1",
+        "document_id": "document-1",
+        "owner_id": "user-1",
+    }
+    assert response.json()["id"] == "document-1"
+
+
+def test_delete_knowledge_base_rejects_processing_documents(monkeypatch):
+    class FakeIndexer:
+        def delete_knowledge_base(self, **_kwargs):
+            raise RuntimeError("knowledge_document_processing")
+
+    monkeypatch.setattr(knowledge_api, "get_document_indexer", lambda: FakeIndexer())
+    app = _app(monkeypatch)
+    with TestClient(app) as client:
+        response = client.delete("/api/knowledge-bases/base-1")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "knowledge_document_processing"
+
+
 def test_base_list_exposes_explicit_write_capability(monkeypatch):
     monkeypatch.setattr(
         knowledge_api,

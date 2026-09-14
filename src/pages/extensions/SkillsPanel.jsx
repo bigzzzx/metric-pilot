@@ -26,7 +26,10 @@ export default function SkillsPanel({ canManage = false }) {
   const load = async preferred => {
     const values = await jsonRequest('/api/skills');
     if (!Array.isArray(values)) throw new Error('Skill 接口返回格式不正确');
-    setSkills(values); setSkillId(current => preferred || current || values[0]?.id || '');
+    setSkills(values); setSkillId(current => {
+      const candidate = preferred || current;
+      return values.some(item => item.id === candidate) ? candidate : values[0]?.id || '';
+    });
   };
   useEffect(() => { load().catch(error => setNotice(error.message)); }, []);
   useEffect(() => {
@@ -78,6 +81,18 @@ export default function SkillsPanel({ canManage = false }) {
     } catch (error) { setNotice(`归档失败：${error.message}`); } finally { setBusy(false); }
   };
 
+  const remove = async () => {
+    if (!draft.id || !canManage || busy) return;
+    if (!window.confirm(`确定永久删除 Skill“${draft.name}”吗？全部版本历史和 Agent 绑定也会一并删除。此操作不可恢复。`)) return;
+    setBusy(true); setNotice('');
+    try {
+      const deleted = await jsonRequest(`/api/skills/${draft.id}`, { method: 'DELETE' });
+      setSkillId(''); setVersions([]);
+      await load();
+      setNotice(`Skill“${deleted.name || draft.name}”已永久删除。`);
+    } catch (error) { setNotice(`删除失败：${error.message}`); } finally { setBusy(false); }
+  };
+
   return <div className="extension-page extension-management">
     <div className="extension-title-row"><div><h2>Skills</h2><p className="page-subtitle">管理可复用的业务行为规范；运行时只注入本轮选中的 Skill。</p></div>{canManage && <button className="outline-button" onClick={() => { setSkillId(''); setDraft(emptySkill); setVersions([]); }}>＋ 新建 Skill</button>}</div>
     {!canManage && <p className="page-subtitle">当前账号仅可查看 Skills；请联系平台管理员申请管理权限。</p>}
@@ -98,7 +113,7 @@ export default function SkillsPanel({ canManage = false }) {
             <label className="wide">示例（每行一个）<textarea rows="4" value={Array.isArray(draft.examples) ? draft.examples.join('\n') : draft.examples} onChange={event => setDraft({ ...draft, examples: event.target.value })} placeholder={'回答 GMV 时说明退款处理方式\n数据不足时明确说明限制'} /></label>
           </fieldset>
           <label className="tool-check"><input type="checkbox" disabled={!canManage || busy} checked={draft.always_on} onChange={event => setDraft({ ...draft, always_on: event.target.checked })} />绑定 Agent 后始终注入（普通 Skill 由路由按需选择）</label>
-          <div className="extension-actions">{canManage && <button disabled={busy}>保存并创建新版本</button>}{draft.id && canManage && <button type="button" className="outline-button" disabled={busy} onClick={archive}>归档</button>}</div>
+          <div className="extension-actions">{canManage && <button disabled={busy}>保存并创建新版本</button>}{draft.id && canManage && <><button type="button" className="outline-button" disabled={busy} onClick={archive}>归档</button><button type="button" className="danger-button" disabled={busy} onClick={remove}>永久删除</button></>}</div>
         </form>
         {draft.id && <section className="skill-version-list"><h3>版本历史</h3>{versions.map(version => <details key={version.id}><summary>v{version.version} · {version.change_note || '更新'}</summary><p>{version.created_at}</p><pre>{version.instructions}</pre></details>)}</section>}
       </main>
