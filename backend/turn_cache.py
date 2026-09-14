@@ -104,7 +104,7 @@ def _runtime_fingerprint(user_id: str) -> str:
 def response_cache_identity(message: str, user_id: str, agent_id: str, model_id: str | None,
                             *, context: dict | None = None) -> dict | None:
     """Scope knowledge answers to context; explicit follow-ups bypass the cache."""
-    if _cache is None or not is_standalone_cacheable_question(message):
+    if (context or {}).get('attachments') or _cache is None or not is_standalone_cacheable_question(message):
         return None
     try:
         configuration = _agent_configuration(agent_id)

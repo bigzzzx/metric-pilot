@@ -68,6 +68,8 @@ from backend.tools.approvals import init_tool_runtime_schema
 from backend.tools.registry import initialized_registry
 from backend.turn_cache import load_cached_response, response_cache_identity, store_cached_response
 from backend.summary_background import summarize_after_response
+from backend.api.attachments import router as attachments_router
+from backend.attachments import repository as attachment_repository
 
 
 def init_storage(connection_factory=None):
@@ -162,6 +164,7 @@ def init_storage(connection_factory=None):
     con.execute("INSERT OR IGNORE INTO knowledge_bases(id,name,description) VALUES (?,?,?)", ("business-knowledge", "业务知识库", "存放指标口径、业务别名、数据使用说明等可检索知识。"))
     con.commit(); con.close()
     init_catalog_schema(connection_factory)
+    attachment_repository.init_schema(connection_factory)
 
 
 class ProviderIn(BaseModel):
@@ -174,6 +177,7 @@ class AgentUpdate(BaseModel):
     model_id: str; tools: list[str]; mcp_servers: list[str] = []; mcp_tools: list[str] = []; skills: list[str] = []; system_prompt: str; enabled: bool = True
 class ChatIn(BaseModel):
     message: str = Field(min_length=1)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
     session_id: str = "default"
     model_id: str | None = None
     client_message_id: str | None = Field(default=None, max_length=100)
@@ -229,6 +233,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Local Data Agent Platform", lifespan=lifespan)
+app.include_router(attachments_router)
+app.add_middleware(UploadBodyLimitMiddleware, max_request_bytes=21 * 1024 * 1024, path_suffix='/attachments/upload')
 app.add_middleware(
     UploadBodyLimitMiddleware,
     max_request_bytes=21 * 1024 * 1024,
@@ -719,6 +725,7 @@ async def chat(x: ChatIn, request: Request, background_tasks: BackgroundTasks, u
             user_id=user["id"],
             content=x.message,
             client_message_id=client_message_id,
+            attachment_ids=getattr(x, 'attachment_ids', []),
         )
         cached = completed_response(x.session_id, user["id"], client_message_id)
         if cached:
@@ -732,6 +739,7 @@ async def chat(x: ChatIn, request: Request, background_tasks: BackgroundTasks, u
                 )
             return cached_chat_response(cached)
         context = context_for_agent(x.session_id, user["id"], exclude_client_message_id=client_message_id)
+        context['attachments'] = attachment_repository.list_files(x.session_id, user['id'])
         turn_cache_key = response_cache_identity(
             x.message, user["id"], "data-query-agent", x.model_id,
             context=context,
@@ -799,6 +807,7 @@ async def chat_stream(x: ChatIn, request: Request, background_tasks: BackgroundT
             user_id=user["id"],
             content=x.message,
             client_message_id=client_message_id,
+            attachment_ids=getattr(x, 'attachment_ids', []),
         )
         cached = completed_response(x.session_id, user["id"], client_message_id)
         context = context_for_agent(
@@ -806,6 +815,7 @@ async def chat_stream(x: ChatIn, request: Request, background_tasks: BackgroundT
             user["id"],
             exclude_client_message_id=client_message_id,
         )
+        context['attachments'] = attachment_repository.list_files(x.session_id, user['id'])
         turn_cache_key = response_cache_identity(
             x.message, user["id"], "data-query-agent", x.model_id,
             context=context,

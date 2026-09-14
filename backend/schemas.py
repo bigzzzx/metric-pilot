@@ -32,7 +32,7 @@ class PlannedToolCall(ModelOutput):
 
 
 class RouteOutput(ModelOutput):
-    route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
+    route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     contextual_follow_up: bool = False
     context_reference: Literal[
         "none", "recent_data_topic", "recent_query_result", "conversation_summary"

@@ -35,7 +35,7 @@ class AgentOutputState(TypedDict, total=False):
     plan_cache_hit: bool
     answer_cache_hit: bool
     route_cache_hit: bool
-    route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
+    route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
     node_trace: list[dict]
@@ -44,7 +44,7 @@ class AgentOutputState(TypedDict, total=False):
 class AgentOverallState(AgentInputState, AgentOutputState, total=False):
     """Complete shared state for the whole Agent graph execution."""
 
-    route: Literal["general", "data_query", "data_analysis", "data_write", "etl"]
+    route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
     context_reference: Literal["none", "recent_data_topic", "recent_query_result", "conversation_summary"]

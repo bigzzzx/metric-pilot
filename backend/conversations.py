@@ -610,6 +610,7 @@ def begin_turn(
     user_id: str,
     content: str,
     client_message_id: str,
+    attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     if not client_message_id:
         raise ValueError("client_message_id is required")
@@ -632,6 +633,9 @@ def begin_turn(
                 raise ConversationConflictError(
                     "client_message_id is already associated with a different message"
                 )
+            old_ids = [item['id'] for item in _load(existing['payload_json']).get('attachments', [])]
+            if sorted(old_ids) != sorted(set(attachment_ids or [])):
+                raise ConversationConflictError('client_message_id 的附件与原消息不一致')
             connection.commit()
             return {"created": False, "message": _message(existing)}
 
@@ -645,6 +649,11 @@ def begin_turn(
         sequence_no = _next_sequence(connection, conversation_id)
         message_id = str(uuid.uuid4())
         timestamp = _now()
+        attachment_views = []
+        if attachment_ids:
+            from backend.attachments.repository import bind, view
+            bind(connection, set(attachment_ids), conversation_id, user_id, message_id)
+            attachment_views = [view(connection.execute('SELECT * FROM chat_attachments WHERE id=?', (ident,)).fetchone()) for ident in dict.fromkeys(attachment_ids)]
         connection.execute(
             """
             INSERT INTO conversation_messages(
@@ -657,7 +666,7 @@ def begin_turn(
                 conversation_id,
                 sequence_no,
                 content,
-                _dump({"text": content}),
+                _dump({"text": content, **({'attachments': attachment_views} if attachment_views else {})}),
                 client_message_id,
                 timestamp,
             ),

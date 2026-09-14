@@ -118,7 +118,9 @@ def register_builtin_tools(target: ToolRegistry | None = None) -> ToolRegistry:
     target = target or registry
     if target.all():
         return target
+    from backend.attachments.import_tool import SPEC as attachment_import_spec
     for spec in (
+        attachment_import_spec,
         ToolSpec(
             id="catalog_schema", name="授权表结构查询",
             description="核实少量授权表的完整可查询字段，不读取样例数据。",

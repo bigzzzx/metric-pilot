@@ -124,6 +124,10 @@ def _log_node_duration(node: str, started_at: float, **fields) -> None:
 
 async def router(state: AgentOverallState) -> AgentOverallState:
     started_at = time.perf_counter()
+    from backend.attachments.repository import list_files, pending
+    files = list_files(state.get('conversation_id', ''), state.get('user_id', ''))
+    if files and (pending(state['conversation_id'], state['user_id']) or any(f['message_id'] == state.get('source_message_id') for f in files)):
+        return {**state, 'route': 'attachment', 'memory_actions': [], 'memory_retrieval': 'none'}
     if is_unambiguous_social_message(state["message"]):
         _log_node_duration("router", started_at, route="general", route_source="fast_path")
         return {
@@ -190,6 +194,7 @@ Do NOT save temporary requests, moods, one-off tasks, guesses, secrets, credenti
 Do NOT save Agent system workflow, Skills/MCP configuration, or platform policy as user memory; those belong to Agent configuration and extensions.
 Use lower_snake_case keys. Use operation forget only when the user explicitly asks to forget or remove a stored preference.
 When no action is justified, return an empty memory_actions list.'''
+    prompt += '\nUse route="attachment" when the user asks about an uploaded file/image or wants to import one into a knowledge base. Otherwise choose the normal route. Uploaded files in this conversation: ' + json.dumps(files, ensure_ascii=False)
     prompt += "\n\nAvailable bound Skills (select up to 3 only when relevant):\n" + json.dumps(available_skills, ensure_ascii=False)
     prompt += "\n\nAvailable bound MCP tools. Select one only when it is needed to satisfy the request; copy its exact id and provide Schema-valid arguments:\n" + json.dumps(available_mcp_tools, ensure_ascii=False)
     route_identity = {
@@ -199,6 +204,7 @@ When no action is justified, return an empty memory_actions list.'''
         "memory_tools_enabled": memory_tools_enabled,
         "available_skills": available_skills,
         "available_mcp_tools": available_mcp_tools,
+        "attachments": files,
     }
     cached_route = agent_cache.get("router", route_identity) if agent_cache else None
     route_cache_hit = False
@@ -221,7 +227,7 @@ When no action is justified, return an empty memory_actions list.'''
     route = decision.get("route", "general")
     if route == "data_analysis" and not has_result:
         route = "data_query"
-    if route not in {"general", "data_query", "data_analysis", "data_write", "etl"}:
+    if route not in {"general", "data_query", "data_analysis", "data_write", "etl", "attachment"}:
         route = "general"
     contextual_follow_up = bool(decision.get("contextual_follow_up", False))
     context_reference = str(decision.get("context_reference") or "none")
@@ -302,6 +308,7 @@ def route_after_memory(state: AgentOverallState) -> str:
 
 
 ROUTER_DESTINATIONS = {
+    "attachment": "attachment",
     "memory": "memory_search",
     "mcp": "mcp_tool",
     "general": "general",

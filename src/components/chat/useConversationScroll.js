@@ -17,6 +17,8 @@ export default function useConversationScroll(session, messages) {
     if (!page) return;
     following.current = true;
     const move = () => {
+      const dock = page.querySelector('.chat-docked');
+      if (dock) page.style.setProperty('--composer-space', `${dock.offsetHeight + 45}px`);
       if (!following.current) return;
       const container = scrollContainer(page);
       // Immediate positioning avoids animating through years of old messages.
@@ -34,6 +36,8 @@ export default function useConversationScroll(session, messages) {
     // Covers streamed text, tables and other content whose height changes later.
     const observer = new ResizeObserver(move);
     observer.observe(page);
+    const dock = page.querySelector('.chat-docked');
+    if (dock) observer.observe(dock);
     move();
     return () => {
       observer.disconnect();
@@ -41,7 +45,7 @@ export default function useConversationScroll(session, messages) {
       window.removeEventListener('resize', move);
       moveToLatest.current = () => {};
     };
-  }, [session]);
+  }, [session, Boolean(messages.length)]);
 
   useLayoutEffect(() => { moveToLatest.current(); }, [messages]);
 

@@ -26,6 +26,7 @@ NODES = {
 
 
 def build_graph(namespace: dict):
+    from backend.attachments.agent import attachment_agent
     builder = StateGraph(namespace["AgentOverallState"],
                          input_schema=namespace["AgentInputState"],
                          output_schema=namespace["AgentOutputState"])
@@ -60,6 +61,9 @@ def build_graph(namespace: dict):
 
     for node, (function, label) in NODES.items():
         builder.add_node(node, wrap(node, function, label))
+    namespace['attachment_agent'] = attachment_agent
+    builder.add_node('attachment', wrap('attachment', 'attachment_agent', '正在读取会话附件'))
+    builder.add_edge('attachment', END)
     builder.add_edge(START, "router")
     builder.add_conditional_edges("router", namespace["route_after_router"], namespace["ROUTER_DESTINATIONS"])
     builder.add_conditional_edges("memory_search", namespace["route_after_memory"], namespace["ROUTER_DESTINATIONS"])

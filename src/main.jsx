@@ -10,6 +10,8 @@ import ToolApprovalCard, { PermissionDeniedCard } from './components/chat/ToolAp
 import MessageText from './components/chat/MessageText.jsx';
 import QueryTraceDetails from './components/chat/QueryTraceDetails.jsx';
 import useConversationScroll from './components/chat/useConversationScroll.js';
+import Composer, { AttachmentLinks } from './components/chat/ChatComposer.jsx';
+import VisionModelSettings from './components/chat/VisionModelSettings.jsx';
 import './styles.css';
 
 const nav = [
@@ -33,33 +35,14 @@ function AssistantAnswer({ data }) {
   </article>;
 }
 
-function Composer({ onSend, busy }) {
-  const [value, setValue] = useState('');
-  const submit = event => { event.preventDefault(); onSend(value); setValue(''); };
-  const handleKeyDown = event => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      if (value.trim() && !busy) { onSend(value); setValue(''); }
-    }
-  };
-  return <form className="home-composer" onSubmit={submit}>
-    <textarea value={value} onChange={event => setValue(event.target.value)} onKeyDown={handleKeyDown} placeholder="发消息给 Data Agent…" rows="3" />
-    <div className="composer-toolbar">
-      <span className="composer-add">＋</span>
-      <span className="toolbar-spacer" />
-      <button type="submit" disabled={busy || !value.trim()} aria-label="发送">↑</button>
-    </div>
-  </form>;
-}
-
 function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConversation, onConversationChanged }) {
   const [busy, setBusy] = useState(false);
   const { pageRef, followLatest } = useConversationScroll(session, messages);
-  const send = async text => {
+  const send = async (text, attachments = []) => {
     const message = text.trim(); if (!message || busy) return;
     followLatest();
     const clientMessageId = crypto.randomUUID();
-    setBusy(true); setMessages(items => [...items, { id: clientMessageId, role: 'user', text: message, clientMessageId }]); onFirstMessage(message);
+    setBusy(true); setMessages(items => [...items, { id: clientMessageId, role: 'user', text: message, clientMessageId, attachments }]); onFirstMessage(message);
     let assistantStarted = false;
     const updateAssistant = updater => setMessages(items => {
       const last = items[items.length - 1];
@@ -75,7 +58,7 @@ function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConvers
       return [...items, { role: 'assistant', streaming: false, data }];
     });
     try {
-      const response = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, client_message_id: clientMessageId }) });
+      const response = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, session_id: session, client_message_id: clientMessageId, attachment_ids: attachments.map(file => file.id) }) });
       if (!response.ok || !response.body) {
         const raw = await response.text();
         let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
@@ -111,7 +94,7 @@ function ChatHome({ session, messages, setMessages, onFirstMessage, onNewConvers
     finally { setBusy(false); onConversationChanged?.(); }
   };
   return <section className="chat-page" ref={pageRef}>
-    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ onSend: send, busy }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={item.id || item.clientMessageId || index}>{item.text}</div> : <AssistantAnswer key={item.id || index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ onSend: send, busy }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
+    {messages.length === 0 ? <div className="home-welcome"><h1>你好，有什么可以帮助你的？</h1><Composer {...{ onSend: send, busy, session }} /></div> : <><div className="conversation-list">{messages.map((item, index) => item.role === 'user' ? <div className="user-bubble" key={item.id || item.clientMessageId || index}><AttachmentLinks items={item.attachments} session={session} />{item.text}</div> : <AssistantAnswer key={item.id || index} data={item.data} />)}</div><div className="chat-docked"><Composer {...{ onSend: send, busy, session }} /></div><button className="new-thread-small" onClick={onNewConversation}>新对话</button></>}
   </section>;
 }
 
@@ -243,7 +226,7 @@ function ManagementConsoleV2({ canManage = false }) {
   return <section className="page agent-page"><h1>智能体管理</h1><div className="manage-tabs"><button className={tab==='agents'?'active':''} onClick={()=>setTab('agents')}>智能体</button><button className={tab==='providers'?'active':''} onClick={()=>setTab('providers')}>模型供应商</button></div>{tab==='agents'?<div className="agent-manager"><aside className="agent-list">{agents.map(a=><button className={a.id===agentId?'active':''} key={a.id} onClick={()=>setAgentId(a.id)}><b>{a.name}</b><span>{a.description}</span></button>)}</aside><form className="agent-editor" onSubmit={saveAgent}><div className="editor-heading"><div><h2>{draft.name}</h2><p>{draft.description}</p></div><label className="switch-label"><input type="checkbox" checked={draft.enabled} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/>启用</label></div><label>绑定模型<select value={draft.model_id} onChange={e=>setDraft({...draft,model_id:e.target.value})}>{models.filter(m=>m.enabled).map(m=><option key={m.id} value={m.id}>{m.display_name}</option>)}</select></label><label>System Prompt<textarea rows="7" value={draft.system_prompt} onChange={e=>setDraft({...draft,system_prompt:e.target.value})}/></label><fieldset><legend>内置工具</legend>{compatibleTools.filter(tool=>tool.category!=='mcp').map(tool=><label className="tool-check" key={tool.id}><input type="checkbox" checked={draft.tools.includes(tool.id)} onChange={()=>flip('tools',tool.id)}/>{tool.name}<small>{tool.risk_level==='high'?' · 高风险，调用时需审批':''}</small></label>)}</fieldset><fieldset><legend>MCP Server</legend>{mcpServers.filter(item=>item.enabled).map(item=><label className="tool-check" key={item.id}><input type="checkbox" checked={draft.mcp_servers.includes(item.id)} onChange={()=>flip('mcp_servers',item.id)}/>{item.name} <small>· {item.tool_count||0} 个工具</small></label>)}</fieldset><fieldset><legend>单独绑定 MCP 工具（可选）</legend>{tools.filter(tool=>tool.category==='mcp').map(tool=><label className="tool-check" key={tool.id}><input type="checkbox" checked={draft.mcp_tools.includes(tool.id)} onChange={()=>flip('mcp_tools',tool.id)}/>{tool.name}</label>)}</fieldset><fieldset><legend>Skills</legend>{skills.filter(item=>item.enabled).map(item=><label className="tool-check" key={item.id}><input type="checkbox" checked={draft.skills.includes(item.id)} onChange={()=>flip('skills',item.id)}/>{item.name}<small> · v{item.current_version}{item.always_on?' · 始终注入':' · 按需选择'}</small></label>)}</fieldset><button className="save-agent">保存配置</button></form></div>:<div className="provider-console"><aside className="provider-list"><button className="add-provider" onClick={newProvider}>＋ 添加供应商</button>{providers.map(p=><button className={p.id===providerId?'active':''} key={p.id} onClick={()=>selectProvider(p.id)}><b>{p.name}</b><span>{p.enabled?'已启用':'未启用'} · {p.kind}</span></button>)}</aside><div className="provider-detail"><form className="config-form" onSubmit={saveProvider}><h2>{providerId?'编辑供应商':'添加供应商'}</h2><input required value={providerDraft.name} onChange={e=>setProviderDraft({...providerDraft,name:e.target.value})} placeholder="供应商名称"/><select value={providerDraft.kind} onChange={e=>setProviderDraft({...providerDraft,kind:e.target.value})}><option value="openai-compatible">OpenAI Compatible API</option><option value="anthropic-messages">Anthropic Messages API</option><option value="ollama">Ollama (Local)</option><option value="vllm">vLLM (Local)</option></select><input required value={providerDraft.base_url} onChange={e=>setProviderDraft({...providerDraft,base_url:e.target.value})} placeholder="Base URL"/><input type="password" value={providerDraft.api_key} onChange={e=>setProviderDraft({...providerDraft,api_key:e.target.value})} placeholder="API Key（留空保留原值；本地可空）"/><label className="tool-check"><input type="checkbox" checked={providerDraft.enabled} onChange={e=>setProviderDraft({...providerDraft,enabled:e.target.checked})}/>启用供应商</label><button>保存供应商</button></form>{providerId&&<div className="provider-models"><div><h2>该供应商的模型</h2><button onClick={discover}>自动发现</button></div>{models.filter(m=>m.provider_id===providerId).map(m=><p key={m.id}><b>{m.display_name}</b><span>{m.model_id}</span><button onClick={()=>toggleModel(m)}>{m.enabled?'已启用':'未启用'}</button></p>)}<form className="config-form" onSubmit={addModel}><h2>手动添加模型</h2><input name="display_name" required placeholder="显示名称"/><input name="model_id" required placeholder="模型 ID"/><button>添加并启用</button></form></div>}</div></div>}{notice&&<p className="save-notice">{notice}</p>}</section>;
 }
 function AgentManager({ canManage = false }) {
-  return <ManagementConsoleV2 canManage={canManage} />;
+  return <><ManagementConsoleV2 canManage={canManage} />{canManage && <VisionModelSettings />}</>;
   const [tab,setTab]=useState('agents'),[agents,setAgents]=useState([]),[models,setModels]=useState([]),[providers,setProviders]=useState([]),[selectedId,setSelectedId]=useState(''),[draft,setDraft]=useState(null),[notice,setNotice]=useState('');
   const load=()=>Promise.all([fetch('/api/agents').then(r=>r.json()),fetch('/api/models').then(r=>r.json()),fetch('/api/providers').then(r=>r.json())]).then(([a,m,p])=>{setAgents(a);setModels(m);setProviders(p);setSelectedId(x=>x||a[0]?.id||'')});
   useEffect(()=>{load()},[]); const selected=agents.find(x=>x.id===selectedId); useEffect(()=>{if(selected)setDraft({...selected,mcp_servers:selected.mcp_servers||[],skills:selected.skills||[]})},[selectedId,agents]);
@@ -269,7 +252,8 @@ async function fetchJson(url, options = {}) {
 function storedMessageToUi(message) {
   if (message.role === 'tool' || message.kind === 'tool') return null;
   if (message.role === 'user') {
-    return { id: message.id, role: 'user', text: message.content, clientMessageId: message.client_message_id, createdAt: message.created_at };
+    const payload = typeof message.payload === 'string' ? JSON.parse(message.payload || '{}') : message.payload;
+    return { id: message.id, role: 'user', text: message.content, clientMessageId: message.client_message_id, createdAt: message.created_at, attachments: payload?.attachments || [] };
   }
   if (message.role !== 'assistant' && message.role !== 'error') return null;
   let payload = message.payload;
