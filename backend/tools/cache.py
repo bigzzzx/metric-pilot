@@ -75,6 +75,18 @@ def dependency_fingerprint(connection_factory: Callable[[], Any]) -> str:
             "sources": [tuple(row) for row in connection.execute(
                 "SELECT id,enabled,COALESCE(last_synced_at,'') FROM data_sources ORDER BY id"
             )],
+            # Extension and knowledge deletion must change the cache identity
+            # immediately, even while an older Redis entry is still within TTL.
+            "knowledge_documents": [tuple(row) for row in connection.execute(
+                "SELECT id,knowledge_base_id,status,updated_at,chunk_count "
+                "FROM knowledge_documents ORDER BY id"
+            )],
+            "mcp_servers": [tuple(row) for row in connection.execute(
+                "SELECT id,enabled,updated_at FROM mcp_servers ORDER BY id"
+            )],
+            "mcp_tools": [tuple(row) for row in connection.execute(
+                "SELECT id,server_id,enabled,unavailable,updated_at FROM mcp_tools ORDER BY id"
+            )],
         }
         return _hash(values)
     finally:

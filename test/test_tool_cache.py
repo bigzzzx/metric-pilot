@@ -3,6 +3,7 @@ import json
 import sqlite3
 
 from backend.main import init_storage
+from backend.mcp.repository import create_server, delete_server
 from backend.tools.cache import RedisToolCache
 from backend.tools.executor import ToolExecutor
 from backend.tools.models import (
@@ -124,6 +125,26 @@ def test_permission_change_and_refresh_mode_cannot_reuse_old_entry(tmp_path):
     assert changed.cache_hit is False
     assert refreshed.cache_hit is False
     assert reused.cache_hit is True
+
+
+def test_deleting_mcp_server_invalidates_existing_tool_cache_entry(tmp_path):
+    calls = []
+    runtime, factory, _redis = _runtime(tmp_path, calls)
+    server = create_server(
+        name="cache-mcp", description="", transport="streamable-http",
+        endpoint="http://127.0.0.1:18765/mcp", auth_type="none", api_key="",
+        timeout_seconds=10, enabled=True, connection_factory=factory,
+    )
+
+    first = runtime.invoke("cache_test", _arguments(), _context("call-1"))
+    assert first.cache_hit is False
+    assert runtime.invoke("cache_test", _arguments(), _context("call-2")).cache_hit is True
+
+    delete_server(server["id"], factory)
+    after_delete = runtime.invoke("cache_test", _arguments(), _context("call-3"))
+
+    assert after_delete.cache_hit is False
+    assert calls == ["相同参数", "相同参数"]
 
 
 def test_redis_failure_falls_back_to_normal_tool_execution(tmp_path):
