@@ -25,3 +25,7 @@
 /* Opaque dock surface keeps scrolled messages from showing below the composer. */
 .chat-docked{z-index:3;isolation:isolate}.chat-docked::before{content:"";position:absolute;z-index:0;left:-44px;right:-44px;top:-52px;bottom:-17px;background:linear-gradient(to bottom,rgba(255,255,255,0),#fff 48px,#fff)}.chat-docked>.home-composer{position:relative;z-index:1}
 .danger-button{border:1px solid #efb6b6!important;background:#fff!important;color:#b42318!important}.danger-button:hover:not(:disabled){background:#fff3f2!important}.danger-button:disabled,.danger-link:disabled{opacity:.45;cursor:not-allowed}.kb-heading-actions,.document-item-actions{display:flex;align-items:center;gap:8px}.danger-link{border:0;background:transparent;color:#b42318;font:10px inherit;padding:2px 3px;cursor:pointer}
+
+/* Extension navigation: only the selected section is highlighted. */
+.extension-tabs button{border-bottom-color:transparent;color:#77808b;font-weight:400;cursor:pointer}
+.extension-tabs button.active{border-bottom-color:#3678e8;color:#2868be;font-weight:600}
