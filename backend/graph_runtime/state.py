@@ -21,6 +21,9 @@ class AgentOutputState(TypedDict, total=False):
     """Fields exposed after a LangGraph run completes."""
 
     rag: list[dict]
+    visualizations: list[dict]
+    visualization_notice: str
+    visualization_reused: bool
     plan: dict
     sql: str
     result: list[dict]
@@ -60,3 +63,5 @@ class AgentOverallState(AgentInputState, AgentOutputState, total=False):
     mcp_tool_result: dict
     query_metrics: list[dict]
     query_terminal: bool
+    visualization_request: dict | None
+    visualization_only: bool

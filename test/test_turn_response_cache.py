@@ -59,6 +59,7 @@ def test_same_question_with_new_message_id_skips_the_whole_graph(tmp_path, monke
         return connection
 
     monkeypatch.setattr(main, "db", isolated_db)
+    monkeypatch.setattr(main.attachment_repository, "db", isolated_db)
     monkeypatch.setattr(conversations, "db", isolated_db)
     monkeypatch.setattr(turn_cache, "db", isolated_db)
     monkeypatch.setattr(turn_cache, "_cache", DictCache())
@@ -78,6 +79,8 @@ def test_same_question_with_new_message_id_skips_the_whole_graph(tmp_path, monke
                 "rag": [],
                 "sql": "SELECT COUNT(*) AS row_count FROM ods.orders",
                 "result": [{"row_count": 1200}],
+                "visualizations": [] if knowledge else [{"result_id":"test-result","chart_type":"card",
+                    "title":"订单数","y":["row_count"],"row_count":1,"available_types":["card","table"]}],
                 "route": "data_query",
                 "route_source": "model",
                 "verified_schemas": {"tables": []},
@@ -133,6 +136,8 @@ def test_same_question_with_new_message_id_skips_the_whole_graph(tmp_path, monke
             ] if not knowledge else ["user", "assistant", "user", "assistant"])
             assert restored["messages"][-1]["payload"]["answer"] == "共 1200 行"
             assert restored["messages"][-1]["payload"]["tool_result"] is None
+            if not knowledge:
+                assert restored["messages"][-1]["payload"]["visualizations"][0]["chart_type"] == "card"
             # Editing the general agent must invalidate its previous answers.
             connection = isolated_db()
             connection.execute("UPDATE agents SET system_prompt='changed style' WHERE id='general-agent'")

@@ -109,7 +109,7 @@ def response_cache_identity(message: str, user_id: str, agent_id: str, model_id:
     try:
         configuration = _agent_configuration(agent_id)
         return {
-            "contract": "turn-response-v2",
+            "contract": "turn-response-v3-visualization",
             "question": normalize_question(message),
             "user_id": user_id,
             "agent_id": agent_id,

@@ -119,7 +119,9 @@ def register_builtin_tools(target: ToolRegistry | None = None) -> ToolRegistry:
     if target.all():
         return target
     from backend.attachments.import_tool import SPEC as attachment_import_spec
+    from backend.visualization.tool import SPEC as visualization_spec
     for spec in (
+        visualization_spec,
         attachment_import_spec,
         ToolSpec(
             id="catalog_schema", name="授权表结构查询",

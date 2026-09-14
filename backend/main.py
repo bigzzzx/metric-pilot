@@ -112,7 +112,7 @@ def init_storage(connection_factory=None):
         configured_agents = [
             ("general-agent", "General Agent", "回答通用问题，不调用数据工具。", ["chat", "memory_search", "memory_write", "memory_forget"], "你是一个友好、可靠的通用中文助手。回答日常问题时不要声称查询了业务数据。"),
             ("data-query-agent", "Data Query Agent", "检索数据资产知识并按需生成安全 SQL。", ["catalog_rag", "readonly_sql", "memory_search", "memory_write", "memory_forget"], "你是严谨的数据查询智能体。只能依据 RAG 元数据和允许的工具处理数据问题。"),
-            ("data-analysis-agent", "Data Analysis Agent", "基于可信查询结果生成业务分析。", ["catalog_rag", "query_result_analysis", "memory_search", "memory_write", "memory_forget"], "你是业务数据分析师。只能依据可信查询结果和指标口径给出结论、限制与后续分析建议。"),
+            ("data-analysis-agent", "Data Analysis Agent", "基于可信查询结果生成业务分析。", ["catalog_rag", "create_visualization", "memory_search", "memory_write", "memory_forget"], "你是业务数据分析师。只能依据可信查询结果和指标口径给出结论、限制与后续分析建议。"),
         ]
         for agent_id, name, description, tools, prompt in configured_agents:
             con.execute("INSERT OR IGNORE INTO agents(id,name,description,model_id,tools,system_prompt,enabled) VALUES (?,?,?,?,?,?,1)", (agent_id, name, description, default_model["id"], json.dumps(tools), prompt))
@@ -165,6 +165,8 @@ def init_storage(connection_factory=None):
     con.commit(); con.close()
     init_catalog_schema(connection_factory)
     attachment_repository.init_schema(connection_factory)
+    from backend.visualization.node import init_bindings
+    init_bindings(connection_factory)
 
 
 class ProviderIn(BaseModel):
@@ -631,9 +633,11 @@ def response_from_state(state: dict) -> ChatResponse:
             {"name": "Data source query", "detail": f"Source: {plan.get('source_id') or 'catalog-resolved'}; returned {len(result)} rows"},
         ]
     return ChatResponse(
+        visualizations=state.get("visualizations", []),
+        visualization_notice=state.get("visualization_notice", ""),
         answer=answer,
         source_id=plan.get('source_id'),
-        intent="DATA_QUERY" if sql else "CHAT",
+        intent="DATA_QUERY" if sql or state.get("visualizations") else "CHAT",
         sql=sql,
         result=result,
         analysis=answer if state.get("final") else "",

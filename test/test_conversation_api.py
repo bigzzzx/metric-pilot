@@ -15,6 +15,7 @@ def test_conversation_api_restores_messages_and_uses_durable_terminal(tmp_path, 
         return connection
 
     monkeypatch.setattr(main, "db", isolated_db)
+    monkeypatch.setattr(main.attachment_repository, "db", isolated_db)
     monkeypatch.setattr(conversations, "db", isolated_db)
 
     active_user = {"id": "user-a", "username": "alice"}

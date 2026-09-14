@@ -12,6 +12,7 @@ import QueryTraceDetails from './components/chat/QueryTraceDetails.jsx';
 import useConversationScroll from './components/chat/useConversationScroll.js';
 import Composer, { AttachmentLinks } from './components/chat/ChatComposer.jsx';
 import VisionModelSettings from './components/chat/VisionModelSettings.jsx';
+const QueryVisualization = React.lazy(() => import('./components/chat/QueryVisualization.jsx'));
 import './styles.css';
 
 const nav = [
@@ -30,7 +31,7 @@ function AssistantAnswer({ data }) {
     {data.approval && <ToolApprovalCard approval={data.approval} />}
     {!data.approval && (data.answer ? <MessageText>{data.answer}</MessageText> : <p className="stream-status">{data.status || '正在处理中…'}</p>)}
     {data.sql && <details><summary>查看 SQL</summary><pre>{data.sql}</pre></details>}
-    {columns.length > 0 && <div className="table-wrap"><table><thead><tr>{columns.map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map(x => <td key={x}>{row[x]}</td>)}</tr>)}</tbody></table></div>}
+    {columns.length > 0 && <React.Suspense fallback={<p>正在加载结果展示…</p>}><QueryVisualization rows={rows} spec={data.visualizations?.[0]} notice={data.visualization_notice} /></React.Suspense>}
     {data.trace && <QueryTraceDetails trace={data.trace} />}
   </article>;
 }

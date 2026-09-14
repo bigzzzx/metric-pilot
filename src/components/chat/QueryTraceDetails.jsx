@@ -9,6 +9,7 @@ const nodeNames = {
   router: '问题路由', memory_search: '长期记忆', rag: '检索目录与知识',
   data_query: '生成查询计划', query: '执行只读查询', repair: '修复 SQL',
   data_analysis: '分析查询结果', query_failed: '处理查询异常',
+  visualization: '生成结果图表',
 };
 
 function SourceList({ sources }) {
@@ -46,7 +47,7 @@ function ExecutionPath({ trace }) {
       <span key={`${node.node}:${index}`} className={node.status}>{nodeNames[node.node] || node.label || node.node}<small>{node.duration_ms == null ? '' : `${node.duration_ms} ms`}</small></span>
     )}</div>}
     {trace.execution && <p className={trace.execution.error_message ? 'trace-error' : ''}>
-      {trace.execution.error_message || `查询成功，返回 ${trace.execution.row_count || 0} 行`}
+      {trace.execution.error_message || (trace.execution.result_reused ? '复用上一次查询结果，本轮未执行 SQL。' : `查询成功，返回 ${trace.execution.row_count || 0} 行`)}
     </p>}
   </section>;
 }

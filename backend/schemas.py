@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.tools.models import SqlScalar, SqlWritePredicate
+from backend.visualization.models import VisualizationRequest, VisualizationOutput
 
 
 class ModelOutput(BaseModel):
@@ -32,6 +33,8 @@ class PlannedToolCall(ModelOutput):
 
 
 class RouteOutput(ModelOutput):
+    visualization: VisualizationRequest | None = None
+    visualization_only: bool = False
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     contextual_follow_up: bool = False
     context_reference: Literal[
@@ -90,6 +93,8 @@ class AnalysisOutput(AnswerOutput):
 
 
 class ChatResponse(BaseModel):
+    visualizations: list[VisualizationOutput] = Field(default_factory=list)
+    visualization_notice: str = ""
     answer: str
     source_id: str | None = None
     intent: Literal["CHAT", "DATA_QUERY"]

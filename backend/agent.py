@@ -33,6 +33,7 @@ from backend.query_quality.sql_normalization import canonicalize_documented_enum
 from backend.query_fast_path import is_unambiguous_technical_query
 from backend.catalog.quality_context import append_quality_notice, quality_context_for_schemas, quality_prompt_context
 from backend.agent_cache import cache_ttl, configured_agent_cache
+from backend.visualization.service import profile as visualization_profile
 
 
 
@@ -93,7 +94,8 @@ def messages(state: AgentOverallState, system: str, include_result: bool = False
     # ``context_for_agent`` removes messages represented by a durable summary.
     # Before the first compaction it deliberately provides a 16-message buffer;
     # preserve that buffer for both routing and final-answer prompts.
-    context.extend(state["history"][-PRE_COMPACTION_HISTORY_LIMIT:])
+    context.extend({"role": item["role"], "content": item.get("content", "")}
+                   for item in state["history"][-PRE_COMPACTION_HISTORY_LIMIT:])
     if include_result and state.get("last_query_result") is not None:
         context.append({"role": "user", "content": "Most recent trusted query result: " + json.dumps(state["last_query_result"], ensure_ascii=False)})
     context.append({"role": "user", "content": state["message"]})
@@ -145,7 +147,7 @@ async def router(state: AgentOverallState) -> AgentOverallState:
             "mcp_tool_call": None,
         }
 
-    if is_unambiguous_technical_query(state["message"]):
+    if is_unambiguous_technical_query(state["message"]) and not re.search(r"图|chart|plot", state["message"], re.I):
         _log_node_duration("router", started_at, route="data_query", route_source="fast_path")
         return {
             **state,
@@ -197,8 +199,14 @@ When no action is justified, return an empty memory_actions list.'''
     prompt += '\nUse route="attachment" when the user asks about an uploaded file/image or wants to import one into a knowledge base. Otherwise choose the normal route. Uploaded files in this conversation: ' + json.dumps(files, ensure_ascii=False)
     prompt += "\n\nAvailable bound Skills (select up to 3 only when relevant):\n" + json.dumps(available_skills, ensure_ascii=False)
     prompt += "\n\nAvailable bound MCP tools. Select one only when it is needed to satisfy the request; copy its exact id and provide Schema-valid arguments:\n" + json.dumps(available_mcp_tools, ensure_ascii=False)
+    prompt += '''\nFor data visualization requests also return visualization={"chart_type":"auto|table|card|line|bar|horizontal_bar|pie|scatter","x":null,"y":[],"title":""} and visualization_only=true|false.
+Use null x and empty y when exact result field names are not yet known. Do not invent field names.
+Set visualization_only=true ONLY for redisplaying the existing result without new filters, dimensions, aggregation, date ranges or calculations; choose data_analysis. Otherwise use data_query when new data is needed.
+For example changing a line to a bar uses the existing result; changing daily totals to a region breakdown needs a new query. Ordinary analytical questions keep visualization_only=false.
+Never set visualization_only for greetings, explanations of charts, writes, or file questions.
+Existing result fields and types: ''' + json.dumps(visualization_profile(state.get("last_query_result") or []), ensure_ascii=False)
     route_identity = {
-        "contract": "router-v1",
+        "contract": "router-v2-visualization",
         "context": _cache_conversation_context(state),
         "has_result": has_result,
         "memory_tools_enabled": memory_tools_enabled,
@@ -225,6 +233,13 @@ When no action is justified, return an empty memory_actions list.'''
         if agent_cache and not decision.get("memory_actions"):
             agent_cache.set("router", route_identity, decision, ROUTE_CACHE_TTL_SECONDS)
     route = decision.get("route", "general")
+    visual_only = bool(decision.get("visualization_only") and has_result and route == "data_analysis")
+    visual_request = decision.get("visualization")
+    if visual_only and visual_request:
+        requested_fields = [*(visual_request.get("y") or []), *([visual_request["x"]] if visual_request.get("x") else [])]
+        existing_fields = visualization_profile(state.get("last_query_result") or [])["columns"]
+        if any(field not in existing_fields for field in requested_fields):
+            route, visual_only = "data_query", False
     if route == "data_analysis" and not has_result:
         route = "data_query"
     if route not in {"general", "data_query", "data_analysis", "data_write", "etl", "attachment"}:
@@ -278,6 +293,8 @@ When no action is justified, return an empty memory_actions list.'''
         "skill_context": selected_context,
         "mcp_tool_call": tool_call,
         "route_cache_hit": route_cache_hit,
+        "visualization_request": visual_request,
+        "visualization_only": visual_only,
     }
 
 
@@ -300,14 +317,17 @@ def route_after_router(state: AgentOverallState) -> str:
         return "memory"
     if state.get("mcp_tool_call"):
         return "mcp"
+    if state.get("visualization_only"):
+        return "visualization_only"
     return state["route"]
 
 
 def route_after_memory(state: AgentOverallState) -> str:
-    return "mcp" if state.get("mcp_tool_call") else state["route"]
+    return "mcp" if state.get("mcp_tool_call") else ("visualization_only" if state.get("visualization_only") else state["route"])
 
 
 ROUTER_DESTINATIONS = {
+    "visualization_only": "data_analysis",
     "attachment": "attachment",
     "memory": "memory_search",
     "mcp": "mcp_tool",
@@ -444,9 +464,12 @@ If a requested asset is absent from supplied evidence, say it cannot be found wi
 Return JSON only:
 {"answer":"Chinese answer","sql":"optional SQL","source_id":"verified source id or null"}. RAG evidence:\n''' + evidence
     base_prompt += planning_instructions(metrics, examples)
+    if state.get("visualization_request"):
+        base_prompt += "\nRequested chart fields (use matching SELECT aliases where supported by real fields; aggregate only as the user requested): " + json.dumps(state["visualization_request"], ensure_ascii=False)
     prompt = base_prompt + schema_instructions(schemas) + quality_prompt_context(quality_context)
     plan_identity = {
-        "contract": "query-plan-v1",
+        "contract": "query-plan-v2-visualization",
+        "visualization_request": state.get("visualization_request"),
         "context": _cache_conversation_context(state),
         "rag": compact_rag(state.get("rag", []), schemas),
         "schemas": schemas,
@@ -572,13 +595,15 @@ Original SQL: {state["sql"]}. Return JSON only: {{"sql":"one corrected SELECT/WI
 
 async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
     result = state.get("result", state.get("last_query_result")) or []
+    if state.get("visualization_only"):
+        return {**state, "result": result, "final": {"answer": "已使用上一次查询结果调整展示；数据未重新查询。"}}
     # The current result is authoritative; do not append a previous result again.
     state = {**state, "last_query_result": result}
     simple_answer = deterministic_query_answer(state, result)
     if simple_answer:
         return {**state, "result": result, "final": {"answer": append_quality_notice(simple_answer, state.get("quality_notice"))}}
     answer_identity = {
-        "contract": "data-analysis-v1",
+        "contract": "data-analysis-v2-visualization",
         "context": _cache_conversation_context(state),
         "sql": state.get("sql") or "",
         "result": result,
@@ -595,6 +620,8 @@ async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
     if streaming_answer.get():
         prompt = ("You are the Data Analysis Agent. Answer in Chinese using only the current trusted result "
                   "and RAG evidence. Never invent data or assert filters absent from the executed SQL.\n"
+                  "The application separately renders validated interactive charts and a data table. Do not draw ASCII charts, emit plotting code, or claim a chart is unavailable. "
+                  "Unless the user requests a detailed report, lead with a short conclusion and at most three evidence-based insights; do not repeat every row. State only relevant limitations.\n"
                   + "Executed SQL:\n" + str(state.get("sql") or "Previous query; SQL unavailable") + "\n"
                   + prompt_context(state["message"], state.get("rag", []))
                   + quality_prompt_context({"risks": state.get("quality_risks", [])})
@@ -609,6 +636,7 @@ You may explain implications and suggest next analyses, but never invent data or
 RAG evidence:\n''' + prompt_context(state["message"], state.get("rag", [])) + "\nTrusted result:\n" + json.dumps(result, ensure_ascii=False)
     prompt += "\nExecuted SQL:\n" + str(state.get("sql") or "Previous query; SQL unavailable")
     prompt += quality_prompt_context({"risks": state.get("quality_risks", [])})
+    prompt += "\nInteractive charts and a data table are rendered separately by the application. Do not draw ASCII charts or emit plotting code. Unless a detailed report is requested, use a short conclusion and at most three evidence-based insights; do not repeat every row."
     final = await complete_structured("data-analysis-agent", messages(state, prompt, include_result=True), AnalysisOutput, state.get("model_id"))
     final_data = final.model_dump()
     final_data["answer"] = append_quality_notice(final_data.get("answer", ""), state.get("quality_notice"))
@@ -768,8 +796,10 @@ graph = build_graph(globals())
 def last_result(history: list[dict]) -> list[dict] | None:
     for item in reversed(history):
         text = item.get("content", "")
-        if text.startswith("Tool result: "):
-            try: return json.loads(text.removeprefix("Tool result: "))
+        if item.get("trusted_query_result") and text.startswith("Tool result: "):
+            try:
+                rows = json.loads(text.removeprefix("Tool result: "))
+                return rows if isinstance(rows, list) and all(isinstance(row, dict) for row in rows) else None
             except json.JSONDecodeError: return None
     return None
 

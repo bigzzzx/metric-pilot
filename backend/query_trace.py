@@ -75,7 +75,7 @@ def _nodes(items: list[dict]) -> list[dict[str, Any]]:
 
 def build_query_trace(state: dict) -> dict[str, Any] | None:
     """Expose evidence coordinates and execution facts, never prompts or credentials."""
-    if not any((state.get("rag"), state.get("sql"), state.get("verified_schemas"), state.get("query_error"))):
+    if not any((state.get("rag"), state.get("sql"), state.get("verified_schemas"), state.get("query_error"), state.get("visualizations"))):
         return None
     plan = state.get("plan") or {}
     rows = state.get("result") or []
@@ -93,6 +93,7 @@ def build_query_trace(state: dict) -> dict[str, Any] | None:
         "filters": (plan.get("filters") or [])[:20],
         "join_relationships": (plan.get("join_relationships") or [])[:10],
         "execution": {
+            "result_reused": bool(state.get("visualization_reused")),
             "status": tool.get("status") if isinstance(tool, dict) else None,
             "row_count": len(rows),
             "tool_cache_hit": bool(tool.get("cache_hit")) if isinstance(tool, dict) else False,

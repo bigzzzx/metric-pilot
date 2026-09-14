@@ -27,6 +27,7 @@ NODES = {
 
 def build_graph(namespace: dict):
     from backend.attachments.agent import attachment_agent
+    from backend.visualization.node import visualization_node
     builder = StateGraph(namespace["AgentOverallState"],
                          input_schema=namespace["AgentInputState"],
                          output_schema=namespace["AgentOutputState"])
@@ -64,6 +65,10 @@ def build_graph(namespace: dict):
     namespace['attachment_agent'] = attachment_agent
     builder.add_node('attachment', wrap('attachment', 'attachment_agent', '正在读取会话附件'))
     builder.add_edge('attachment', END)
+    namespace['visualization_node'] = visualization_node
+    builder.add_node('visualization', wrap('visualization', 'visualization_node', '正在生成结果图表'))
+    builder.add_edge('data_analysis', 'visualization')
+    builder.add_edge('visualization', END)
     builder.add_edge(START, "router")
     builder.add_conditional_edges("router", namespace["route_after_router"], namespace["ROUTER_DESTINATIONS"])
     builder.add_conditional_edges("memory_search", namespace["route_after_memory"], namespace["ROUTER_DESTINATIONS"])
@@ -73,6 +78,6 @@ def build_graph(namespace: dict):
     builder.add_conditional_edges("query", namespace["route_after_query"],
                                   {"repair": "repair", "analysis": "data_analysis", "query_failed": "query_failed"})
     builder.add_edge("repair", "query")
-    for node in ("general", "data_write", "etl", "data_analysis", "query_failed", "mcp_tool"):
+    for node in ("general", "data_write", "etl", "query_failed", "mcp_tool"):
         builder.add_edge(node, END)
     return builder.compile()

@@ -468,7 +468,7 @@ def history_for_agent(
             payload = item["payload"]
             result = payload.get("result", payload) if isinstance(payload, dict) else payload
             history.append(
-                {"role": "user", "content": "Tool result: " + _dump(result)}
+                {"role": "user", "content": "Tool result: " + _dump(result), "trusted_query_result": True}
             )
     return history
 
