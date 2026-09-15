@@ -1,5 +1,7 @@
 import asyncio
 import json
+import sqlite3
+from pathlib import Path
 from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
@@ -107,19 +109,98 @@ def test_governed_errors_are_not_rewritten(isolated):
 def test_wiki_draft_review_version_rag_and_cache(isolated,monkeypatch):
     con=isolated();con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')");con.commit();con.close()
     before=dependency_fingerprint(isolated)
-    async def complete(*args): return wiki.WikiDraft(summary='已支付',content='模型新草稿，需要审核。')
+    source_ref='wiki-source:metric-demo-paid:catalog-v1'
+    evidence='仅统计 PAID 状态订单金额，排除取消和退款状态。'
+    async def complete(*args): return wiki.WikiDraft(
+        summary='已支付',content='模型新草稿，需要审核。',
+        claims=[{'claim_type':'definition','content':'只统计已支付订单','source_ref':source_ref,'evidence':evidence}],
+    )
     monkeypatch.setattr(wiki,'complete_structured',complete)
     asyncio.run(wiki.generate_draft('metric-demo-paid','eval-analyst'))
     docs=authorized_catalog_documents('eval-analyst')
     assert not any('模型新草稿' in d['content'] for d in docs)
     con=isolated();row=con.execute("SELECT * FROM catalog_metrics WHERE id='metric-demo-paid'").fetchone();con.close()
     payload=wiki.MetricReview(expected_version=row['catalog_version'],aliases=['演示已支付金额'],
-                             contract=json.loads(row['contract_json']),wiki={'summary':'已审核','content':'模型新草稿，需要审核。'})
-    wiki.publish('metric-demo-paid','eval-analyst',payload)
+                             contract=json.loads(row['contract_json']),wiki={'summary':'已审核','content':'模型新草稿，需要审核。',
+                             'claims':[{'claim_type':'definition','content':'只统计已支付订单','source_ref':source_ref,'evidence':evidence}]})
+    published=wiki.publish('metric-demo-paid','eval-analyst',payload)
+    assert published['index_status']=='pending'
     assert before!=dependency_fingerprint(isolated)
-    assert any('模型新草稿' in d['content'] for d in authorized_catalog_documents('eval-analyst'))
+    document=next(d for d in authorized_catalog_documents('eval-analyst') if d['id']=='catalog:metric-wiki:metric-demo-paid')
+    assert '模型新草稿' in document['content'] and source_ref in document['content']
+    from backend.catalog import vector_index
+    monkeypatch.setattr(vector_index,'ensure_catalog_index',lambda: True)
+    assert wiki.run_index_job(published['index_job_id'])['status']=='completed'
+    con=isolated();job=con.execute('SELECT status FROM metric_wiki_index_jobs WHERE id=?',(published['index_job_id'],)).fetchone();con.close()
+    assert job['status']=='completed'
     with pytest.raises(HTTPException) as error: wiki.publish('metric-demo-paid','eval-analyst',payload)
     assert error.value.status_code==409
+
+
+def test_wiki_sources_are_content_addressed_and_immutable(isolated):
+    con=isolated();con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')");con.commit();con.close()
+    payload=wiki.WikiSourceInput(source_type='meeting_record',title='口径评审会',
+        source_uri='meeting://2026-09-15',content='结论：有效订单只统计 PAID 状态。')
+    first=wiki.add_source('metric-demo-paid','eval-analyst',payload)
+    second=wiki.add_source('metric-demo-paid','eval-analyst',payload)
+    assert first['id']==second['id'] and len(first['content_hash'])==64
+    con=isolated()
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute('UPDATE metric_wiki_sources SET title=? WHERE id=?',('changed',first['id']))
+    con.rollback()
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute('DELETE FROM metric_wiki_sources WHERE id=?',(first['id'],))
+    con.close()
+
+
+def test_wiki_generation_repairs_non_verbatim_model_evidence(isolated,monkeypatch):
+    con=isolated();con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')");con.commit();con.close()
+    calls=[]
+    async def complete(*args):
+        calls.append(args)
+        evidence='概括后的证据' if len(calls)==1 else '仅统计 PAID 状态订单金额，排除取消和退款状态。'
+        return wiki.WikiDraft(summary='已支付',content='待审核',
+            claims=[{'claim_type':'definition','content':'只统计已支付订单',
+                     'source_ref':'wiki-source:metric-demo-paid:catalog-v1','evidence':evidence}])
+    monkeypatch.setattr(wiki,'complete_structured',complete)
+    draft=asyncio.run(wiki.generate_draft('metric-demo-paid','eval-analyst'))
+    assert len(calls)==2
+    assert draft['claims'][0]['evidence']=='仅统计 PAID 状态订单金额，排除取消和退款状态。'
+
+
+def test_failed_wiki_index_job_can_be_retried(isolated,monkeypatch):
+    con=isolated();con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')");con.commit()
+    row=con.execute("SELECT * FROM catalog_metrics WHERE id='metric-demo-paid'").fetchone();con.close()
+    review=wiki.MetricReview(expected_version=row['catalog_version'],aliases=[],
+        contract=json.loads(row['contract_json']),wiki={'summary':'已审核','content':'已审核',
+        'claims':[{'claim_type':'definition','content':'只统计已支付订单',
+        'source_ref':'wiki-source:metric-demo-paid:catalog-v1',
+        'evidence':'仅统计 PAID 状态订单金额，排除取消和退款状态。'}]})
+    published=wiki.publish('metric-demo-paid','eval-analyst',review)
+    from backend.catalog import vector_index
+    monkeypatch.setattr(vector_index,'ensure_catalog_index',lambda: False)
+    assert wiki.run_index_job(published['index_job_id'])['status']=='failed'
+    assert wiki.retry_index('metric-demo-paid','eval-analyst')['status']=='pending'
+    monkeypatch.setattr(vector_index,'ensure_catalog_index',lambda: True)
+    assert wiki.run_index_job(published['index_job_id'])['status']=='completed'
+
+
+def test_wiki_rejects_non_verbatim_or_unknown_evidence(isolated):
+    con=isolated();con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')");con.commit()
+    row=con.execute("SELECT * FROM catalog_metrics WHERE id='metric-demo-paid'").fetchone();con.close()
+    payload=wiki.MetricReview(expected_version=row['catalog_version'],aliases=[],
+        contract=json.loads(row['contract_json']),wiki={'summary':'bad','content':'bad',
+        'claims':[{'claim_type':'definition','content':'错误声明','source_ref':'wiki-source:missing','evidence':'并不存在'}]})
+    with pytest.raises(HTTPException) as error:
+        wiki.publish('metric-demo-paid','eval-analyst',payload)
+    assert error.value.status_code==422
+
+
+def test_metric_wiki_schema_files_are_versioned():
+    root=Path(__file__).parents[1]/'backend'/'semantic_metrics'/'schema'
+    assert 'schema_version: 1' in (root/'metric-wiki.schema.yaml').read_text(encoding='utf-8')
+    assert 'append-only' in (root/'ingestion-rules.md').read_text(encoding='utf-8')
+    assert 'verbatim' in (root/'publication-rules.md').read_text(encoding='utf-8')
 
 
 def test_wiki_generation_requires_management(isolated):

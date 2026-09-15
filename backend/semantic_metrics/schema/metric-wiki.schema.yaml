@@ -1,0 +1,40 @@
+schema_version: 1
+entity: governed_metric_wiki
+ownership:
+  raw_sources: append_only
+  wiki_draft: llm_generated_human_reviewed
+  wiki_published: administrator_approved
+  executable_contract: administrator_approved
+required_layers:
+  raw:
+    table: metric_wiki_sources
+    immutable: true
+    identity: sha256_content_hash
+  wiki:
+    draft_field: catalog_metrics.wiki_draft_json
+    published_field: catalog_metrics.wiki_json
+  schema:
+    runtime_models:
+      - WikiSourceInput
+      - WikiClaim
+      - WikiDraft
+      - MetricReview
+claim:
+  required_fields:
+    - claim_type
+    - content
+    - source_ref
+    - evidence
+  evidence_rule: evidence_must_be_verbatim_substring_of_source
+publication:
+  optimistic_version_check: true
+  require_published_asset: true
+  require_same_business_domain: true
+  require_valid_contract_fields: true
+  require_approved_aggregate_expression: true
+  enqueue_vector_index_refresh: true
+retrieval:
+  source_of_truth: sqlite
+  derived_index: milvus
+  index_only_approved_wiki: true
+  permission_filter_before_rerank: true

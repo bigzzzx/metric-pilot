@@ -189,7 +189,15 @@ def list_metrics(user_id: str) -> list[dict[str, Any]]:
             item.pop('wiki_json',None)
             draft=item.pop('wiki_draft_json','{}')
             item['can_manage']=can_access(user_id,MANAGE,connection=con)
-            if item['can_manage']: item['wiki_draft']=_json(draft,{})
+            if item['can_manage']:
+                from backend.semantic_metrics.wiki import source_records
+                item['wiki_draft']=_json(draft,{})
+                item['wiki_sources']=source_records(con,row['id'])
+                job=con.execute(
+                    "SELECT status,error,completed_at FROM metric_wiki_index_jobs WHERE metric_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+                    (row['id'],),
+                ).fetchone()
+                item['wiki_index']=dict(job) if job else None
             result.append(item)
     con.close(); return result
 

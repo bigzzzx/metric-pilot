@@ -22,7 +22,8 @@ async def main():
             con=factory();row=con.execute("SELECT * FROM catalog_metrics WHERE id='metric-demo-paid'").fetchone();con.close()
             assert json.loads(row['wiki_json'])['origin']=='reviewed-demo'
             review=wiki.MetricReview(expected_version=row['catalog_version'],aliases=json.loads(row['aliases_json']),
-                                    contract=json.loads(row['contract_json']),wiki={k:draft[k] for k in ('summary','content','related_metric_ids')})
+                                    contract=json.loads(row['contract_json']),
+                                    wiki={k:draft[k] for k in ('summary','content','related_metric_ids','claims')})
             start=time.perf_counter();published=wiki.publish('metric-demo-paid','eval-analyst',review)
             publication_ms=round((time.perf_counter()-start)*1000,2)
             documents=authorized_catalog_documents('eval-analyst')

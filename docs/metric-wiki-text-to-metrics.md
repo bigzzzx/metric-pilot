@@ -29,6 +29,14 @@ data_query
 
 这借鉴了 LLM Wiki/Graphify 的“实体关系 + 可检索子图”思路，但当前使用关系字段和 RAG 文档实现，没有额外引入图数据库。
 
+### 三层 Wiki 的产品化映射
+
+1. **Raw**：metric_wiki_sources 保存不可变原始内容、来源地址和 SHA-256。数据库触发器禁止更新与删除；修订必须新增来源。
+2. **Wiki**：wiki_draft_json 保存模型草稿，wiki_json 保存管理员发布版本。每条声明都包含 source_ref 和原文 evidence。
+3. **Schema**：backend/semantic_metrics/schema/ 保存显式规则，Pydantic 和发布服务执行同一套约束。
+
+SQLite 是线上事实来源；Milvus 只是已审核 Wiki 的派生检索索引。发布事务会创建 metric_wiki_index_jobs，FastAPI 后台任务在事务提交后刷新 Milvus，并记录完成或失败状态。
+
 ## 安全与一致性
 
 - 执行前再次检查指标版本、数据源状态、资产状态和用户权限，防止计划后配置被修改。

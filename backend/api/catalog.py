@@ -1,5 +1,5 @@
 """Authenticated HTTP routes for the governed data catalog."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backend.auth import require_user
@@ -9,7 +9,9 @@ from backend.catalog.service import get_asset, list_assets, list_domains, list_m
 from backend.catalog.review import AssetReview, ReviewDecision, save_review, change_status
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
-from backend.semantic_metrics.wiki import MetricReview, generate_draft, publish
+from backend.semantic_metrics.wiki import (
+    MetricReview, WikiSourceInput, add_source, generate_draft, publish, retry_index, run_index_job,
+)
 
 
 @router.post('/admin/metrics/{metric_id}/wiki-draft')
@@ -17,9 +19,26 @@ async def metric_wiki_draft(metric_id: str, user: dict = Depends(require_user)):
     return await generate_draft(metric_id,user['id'])
 
 
+@router.post('/admin/metrics/{metric_id}/wiki-sources')
+def metric_wiki_source(metric_id: str, payload: WikiSourceInput, user: dict = Depends(require_user)):
+    return add_source(metric_id, user['id'], payload)
+
+
 @router.put('/admin/metrics/{metric_id}/publish')
-def publish_metric(metric_id: str, payload: MetricReview, user: dict = Depends(require_user)):
-    return publish(metric_id,user['id'],payload)
+def publish_metric(metric_id: str, payload: MetricReview, background_tasks: BackgroundTasks,
+                   user: dict = Depends(require_user)):
+    result = publish(metric_id,user['id'],payload)
+    background_tasks.add_task(run_index_job, result['index_job_id'])
+    return result
+
+
+@router.post('/admin/metrics/{metric_id}/wiki-index/retry')
+def retry_metric_wiki_index(metric_id: str, background_tasks: BackgroundTasks,
+                            user: dict = Depends(require_user)):
+    result = retry_index(metric_id, user['id'])
+    if result['status'] != 'completed':
+        background_tasks.add_task(run_index_job, result['id'])
+    return result
 
 
 class BatchPublishItem(BaseModel):
