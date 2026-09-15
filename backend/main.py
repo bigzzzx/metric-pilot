@@ -646,7 +646,7 @@ def response_from_state(state: dict) -> ChatResponse:
     sql, result = state.get("sql", ""), state.get("result", [])
     steps = [
         {"name": "RAG metadata retrieval", "detail": f"Retrieved {len(state.get('rag', []))} metadata / metric / SQL-example chunks"},
-        {"name": "LLM planning", "detail": "Model chose chat or tool usage"},
+        {"name": "Query planning", "detail": "Governed metric compiler" if state.get('query_mode')=='text_to_metrics' else "Model chose chat or tool usage"},
     ]
     if sql:
         steps += [

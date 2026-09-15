@@ -18,6 +18,7 @@ def evaluation_environment(directory):
     from backend.hybrid_retrieval import bm25_rank
     from backend.tools import sql_tool
     from backend.query_quality import schema_lookup
+    from backend.semantic_metrics import repository as metric_repository, wiki as metric_wiki
     from backend.tools.models import ToolResult, ToolStatus
 
     platform, warehouse = directory / "platform.db", directory / "warehouse.db"
@@ -72,7 +73,7 @@ def evaluation_environment(directory):
                                   error={"code": "permission_denied" if exc.status_code == 403 else getattr(exc, "code", "sql_error"), "message": str(exc.detail)})
 
     with ExitStack() as stack:
-        for module in (rag_documents, retrieval, service, sql_tool, schema_lookup):
+        for module in (rag_documents, retrieval, service, sql_tool, schema_lookup, metric_repository, metric_wiki):
             stack.enter_context(patch.object(module, "db", factory))
         stack.enter_context(patch.object(agent, "tool_executor", FixtureTools()))
         stack.enter_context(patch.object(agent, "has_tool", lambda _agent, tool: tool in {"chat", "catalog_rag", "readonly_sql", "query_result_analysis"}))

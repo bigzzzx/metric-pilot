@@ -108,6 +108,8 @@ def init_catalog_schema(connection_factory=None) -> None:
     con.execute("CREATE INDEX IF NOT EXISTS idx_catalog_quality_snapshots_run ON catalog_quality_snapshots(run_id)")
     _seed_governance(con)
     _seed_demo_catalog(con)
+    from backend.semantic_metrics.storage import migrate
+    migrate(con)
     _bootstrap_existing_users(con)
     _cleanup_legacy_local_sync_duplicates(con)
     con.commit(); con.close()

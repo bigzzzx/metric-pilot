@@ -143,6 +143,8 @@ def test_router_dispatches_to_memory_node_only_for_search_decision(monkeypatch):
 
 
 def test_social_fast_path_skips_router_model_and_keeps_context(monkeypatch):
+    from backend.attachments import repository
+    monkeypatch.setattr(repository, 'list_files', lambda *a, **kw: [])
     async def should_not_call_model(*_args, **_kwargs):
         raise AssertionError("unambiguous greeting must not call Router model")
 
@@ -163,6 +165,8 @@ def test_social_fast_path_skips_router_model_and_keeps_context(monkeypatch):
 
 
 def test_router_receives_history_and_records_contextual_data_decision(monkeypatch):
+    from backend.attachments import repository
+    monkeypatch.setattr(repository, 'list_files', lambda *a, **kw: [])
     captured = {}
 
     async def fake_complete(_agent_id, prompt_messages, _schema, _model_id):

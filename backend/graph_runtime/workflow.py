@@ -14,6 +14,8 @@ NODES = {
     "memory_search": ("retrieve_long_term_memory", "正在检索相关长期记忆"),
     "general": ("general_agent", "正在生成回答"),
     "rag": ("rag_retrieve", "正在检索数据目录"),
+    "metric_router": ("metric_router", "正在匹配指标口径"),
+    "metric_plan": ("metric_plan", "正在编译指标查询"),
     "data_query": ("data_query_agent", "正在规划查询"),
     "query": ("query_tool", "正在执行只读查询"),
     "repair": ("repair_sql", "正在修复 SQL"),
@@ -70,8 +72,12 @@ def build_graph(namespace: dict):
     builder.add_edge('data_analysis', 'visualization')
     builder.add_edge('visualization', END)
     builder.add_edge(START, "router")
-    builder.add_conditional_edges("router", namespace["route_after_router"], namespace["ROUTER_DESTINATIONS"])
-    builder.add_conditional_edges("memory_search", namespace["route_after_memory"], namespace["ROUTER_DESTINATIONS"])
+    destinations={key: ('metric_router' if value=='rag' else value) for key,value in namespace['ROUTER_DESTINATIONS'].items()}
+    builder.add_conditional_edges("router", namespace["route_after_router"], destinations)
+    builder.add_conditional_edges("memory_search", namespace["route_after_memory"], destinations)
+    builder.add_conditional_edges('metric_router', namespace['route_after_metric_router'],
+                                  {'metric':'metric_plan','rag':'rag','finish':END})
+    builder.add_conditional_edges('metric_plan', namespace['route_after_plan'], {'query':'query','finish':END})
     builder.add_conditional_edges("rag", lambda s: "analysis" if s["route"] == "data_analysis" else "query",
                                   {"analysis": "data_analysis", "query": "data_query"})
     builder.add_conditional_edges("data_query", namespace["route_after_plan"], {"query": "query", "finish": END})

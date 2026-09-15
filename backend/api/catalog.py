@@ -9,6 +9,17 @@ from backend.catalog.service import get_asset, list_assets, list_domains, list_m
 from backend.catalog.review import AssetReview, ReviewDecision, save_review, change_status
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
+from backend.semantic_metrics.wiki import MetricReview, generate_draft, publish
+
+
+@router.post('/admin/metrics/{metric_id}/wiki-draft')
+async def metric_wiki_draft(metric_id: str, user: dict = Depends(require_user)):
+    return await generate_draft(metric_id,user['id'])
+
+
+@router.put('/admin/metrics/{metric_id}/publish')
+def publish_metric(metric_id: str, payload: MetricReview, user: dict = Depends(require_user)):
+    return publish(metric_id,user['id'],payload)
 
 
 class BatchPublishItem(BaseModel):

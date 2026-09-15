@@ -21,6 +21,9 @@ class AgentOutputState(TypedDict, total=False):
     """Fields exposed after a LangGraph run completes."""
 
     rag: list[dict]
+    query_mode: Literal['text_to_metrics', 'text_to_sql']
+    metric_resolution: dict
+    metric_parameter_model_used: bool
     visualizations: list[dict]
     visualization_notice: str
     visualization_reused: bool

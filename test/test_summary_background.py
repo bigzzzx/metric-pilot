@@ -6,6 +6,7 @@ from backend import main, summary_background
 
 
 def test_cached_stream_sends_done_before_summary_and_contains_failure(monkeypatch):
+    monkeypatch.setattr(main.attachment_repository, 'list_files', lambda *a, **kw: [])
     sent = []
     async def compact(*args):
         assert any(b'event: done' in item.get('body', b'') for item in sent)

@@ -27,6 +27,7 @@ from backend.tools.sql_write_tool import prepare_sql_write, writable_schema_summ
 from backend.mcp.runtime import is_tool_bound, tool_catalog_for_router
 from backend.skills.repository import bound_skill_summaries, selected_skill_context
 from backend.query_quality.evidence import metric_context, check_metric_references, planning_instructions, retrieval_question
+from backend.semantic_metrics.nodes import metric_router, metric_plan, route_after_metric_router, current_contract_issue
 from backend.query_quality.examples import retrieve_examples
 from backend.query_quality.planner_context import candidate_tables, schema_instructions, compact_rag
 from backend.query_quality.sql_normalization import canonicalize_documented_enums
@@ -510,6 +511,19 @@ Return JSON only:
     if agent_cache and not plan_cache_hit and not used_schema_request and not plan.schema_request:
         agent_cache.set("query-plan", plan_identity, plan.model_dump(mode="json"), PLAN_CACHE_TTL_SECONDS)
     plan_data = plan.model_dump()
+    # A semantic RAG/Wiki match can discover a governed metric without an exact
+    # alias. Once the planner cites that identity, compile its contract rather
+    # than executing the model's proposed SQL.
+    if plan.sql and plan.metric_refs:
+        from backend.semantic_metrics.repository import metric_records
+        from backend.semantic_metrics.models import MetricResolution
+        referenced={ref['id'] if isinstance(ref,dict) else ref.id for ref in plan.metric_refs}
+        governed=[m for m in metric_records(state.get('user_id','')) if m.document_id in referenced and m.contract]
+        if governed:
+            if len(governed)!=1 or not governed[0].can_query or governed[0].certification_status!='certified' or governed[0].contract.status!='active':
+                return {**state,'final':{'answer':'请先确认一个可查询的已认证指标口径。'},'plan':{'sql':None}}
+            bound={**state,'query_mode':'text_to_metrics','metric_resolution':MetricResolution(status='matched',metrics=governed).model_dump(mode='json')}
+            return await metric_plan(bound)
     if not plan.sql:
         plan_data["answer"] = append_quality_notice(plan_data.get("answer", ""), quality_context.get("notice"))
     _log_node_duration("data_query", started_at, has_sql=bool(plan.sql), quality_risks=len(quality_context["risks"]),
@@ -526,7 +540,7 @@ def route_after_plan(state: AgentOverallState) -> str:
 
 def query_tool(state: AgentOverallState) -> AgentOverallState:
     sql = str(state["plan"].get("sql") or "").strip()
-    issue = check_metric_references(state["plan"], state.get("query_metrics", []), state.get("user_id", ""))
+    issue = current_contract_issue(state) or check_metric_references(state["plan"], state.get("query_metrics", []), state.get("user_id", ""))
     if issue:
         return {**state, "sql": sql, "query_error": issue, "query_terminal": True}
     outcome = tool_executor.invoke(
@@ -580,6 +594,8 @@ async def execute_mcp_tool(state: AgentOverallState) -> AgentOverallState:
 
 
 def route_after_query(state: AgentOverallState) -> str:
+    if state.get('query_mode') == 'text_to_metrics' and state.get('query_error'):
+        return 'query_failed'
     if state.get("query_terminal"):
         return "query_failed"
     if state.get("query_error") and state.get("repair_attempts", 0) < 1: return "repair"
@@ -595,6 +611,14 @@ Original SQL: {state["sql"]}. Return JSON only: {{"sql":"one corrected SELECT/WI
 
 async def data_analysis_agent(state: AgentOverallState) -> AgentOverallState:
     result = state.get("result", state.get("last_query_result")) or []
+    if state.get('query_mode') == 'text_to_metrics':
+        metric=state.get('metric_resolution',{}).get('metrics',[{}])[0]
+        answer=('已按“'+metric.get('display_name','指标')+'”的已认证口径查询，返回 '+str(len(result))+' 行。')
+        if len(result)==1:
+            answer += '\n'+'；'.join(str(k)+'：'+('无数据' if v is None else str(v)) for k,v in result[0].items())
+        if not result: answer += ' 本次条件下无匹配数据。'
+        answer += '\n口径：'+metric.get('description','')
+        return {**state,'result':result,'final':{'answer':append_quality_notice(answer,state.get('quality_notice'))}}
     if state.get("visualization_only"):
         return {**state, "result": result, "final": {"answer": "已使用上一次查询结果调整展示；数据未重新查询。"}}
     # The current result is authoritative; do not append a previous result again.

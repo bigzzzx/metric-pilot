@@ -115,14 +115,11 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
             ))
 
         for metric in con.execute("SELECT * FROM catalog_metrics WHERE publish_status='published' ORDER BY id"):
-            documents.append(_document(
-                identifier=f"catalog:metric:{metric['id']}", kind="metric",
-                title=f"指标：{metric['display_name']}",
-                content=(f"指标：{metric['display_name']}。定义：{metric['description']}。"
-                         f"公式：{metric['formula']}。SQL 口径：{metric['definition_sql']}。"
-                         f"粒度：{metric['grain']}。认证状态：{metric['certification_status']}。"),
-                keywords=[metric["name"], metric["display_name"], "指标", "口径"], domain_id=metric["domain_id"],
-            ))
+            from backend.semantic_metrics.storage import metric_document, wiki_document
+            documents.append(metric_document(metric))
+            wiki = wiki_document(metric)
+            if wiki:
+                documents.append(wiki)
 
         for term in con.execute("SELECT * FROM catalog_terms WHERE publish_status='published' ORDER BY id"):
             aliases = _json(term["aliases_json"], [])
@@ -140,6 +137,12 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
 
 def is_document_authorized(document: dict[str, Any], user_id: str, connection: sqlite3.Connection) -> bool:
     """Require access to every asset referenced by a RAG document."""
+    if document.get('kind')=='metric_wiki':
+        from backend.semantic_metrics.wiki import visible_wiki
+        row=connection.execute('SELECT * FROM catalog_metrics WHERE id=?',(document['metric_id'],)).fetchone()
+        if not row or not visible_wiki(connection,row,user_id): return False
+    domain=document.get('domain_id')
+    if domain and not can_access(user_id,DISCOVER,domain_id=domain,connection=connection): return False
     asset_ids = document.get("asset_ids") or []
     if asset_ids:
         return all(can_access(user_id, DISCOVER, asset_id=asset_id, connection=connection) for asset_id in asset_ids)

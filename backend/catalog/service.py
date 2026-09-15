@@ -178,7 +178,19 @@ def sample_asset(user_id: str, asset_id: str, limit: int = 5) -> dict[str, Any]:
 def list_metrics(user_id: str) -> list[dict[str, Any]]:
     con = db(); result = []
     for row in con.execute("SELECT * FROM catalog_metrics WHERE publish_status='published' ORDER BY certification_status='certified' DESC,display_name"):
-        if can_access(user_id, DISCOVER, domain_id=row["domain_id"], connection=con): result.append(dict(row))
+        if can_access(user_id, DISCOVER, domain_id=row["domain_id"], connection=con):
+            from backend.semantic_metrics.wiki import visible_wiki
+            item=dict(row)
+            contract=_json(item.pop('contract_json','{}'),{})
+            if contract.get('asset_id') and not can_access(user_id,DISCOVER,asset_id=contract['asset_id'],connection=con): continue
+            item['contract']=contract
+            item['aliases']=_json(item.pop('aliases_json','[]'),[])
+            item['wiki']=visible_wiki(con,row,user_id)
+            item.pop('wiki_json',None)
+            draft=item.pop('wiki_draft_json','{}')
+            item['can_manage']=can_access(user_id,MANAGE,connection=con)
+            if item['can_manage']: item['wiki_draft']=_json(draft,{})
+            result.append(item)
     con.close(); return result
 
 
