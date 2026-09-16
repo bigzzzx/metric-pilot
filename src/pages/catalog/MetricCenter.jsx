@@ -11,38 +11,40 @@ function MetricCard({ metric, metrics, onUpdated }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [noticeKind, setNoticeKind] = useState('info');
+  const [draftGenerationFailed, setDraftGenerationFailed] = useState(false);
   const [aliases, setAliases] = useState((metric.aliases || []).join('、'));
   const [contract, setContract] = useState(JSON.stringify(metric.contract || {}, null, 2));
   const [wiki, setWiki] = useState(metric.wiki_draft?.content ? metric.wiki_draft : metric.wiki || { summary: '', content: '', related_metric_ids: [], claims: [] });
   const [claims, setClaims] = useState(JSON.stringify((metric.wiki_draft?.content ? metric.wiki_draft : metric.wiki)?.claims || [], null, 2));
   const [source, setSource] = useState({ source_type: 'business_document', title: '', source_uri: '', content: '' });
   const generate = async () => {
-    setBusy(true); setNotice('');
+    setBusy(true); setNotice(''); setNoticeKind('info'); setDraftGenerationFailed(false);
     try {
       const result = await request(`/api/catalog/admin/metrics/${metric.id}/wiki-draft`, { method: 'POST' });
       setWiki(result); setClaims(JSON.stringify(result.claims || [], null, 2));
-      setEditing(true); setNotice('草稿已生成。请逐条核对来源证据和执行契约后发布。');
-    } catch (error) { setNotice(error.message); } finally { setBusy(false); }
+      setEditing(true); setNotice('草稿已生成。请逐条核对来源证据和执行契约后发布。'); setNoticeKind('success'); setDraftGenerationFailed(false);
+    } catch (error) { setNotice(error.message); setNoticeKind('error'); setDraftGenerationFailed(true); } finally { setBusy(false); }
   };
   const saveSource = async () => {
-    setBusy(true); setNotice('');
+    setBusy(true); setNotice(''); setNoticeKind('info');
     try {
       await request(`/api/catalog/admin/metrics/${metric.id}/wiki-sources`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(source),
       });
       setSource({ source_type: 'business_document', title: '', source_uri: '', content: '' });
-      setNotice('原始来源已按内容哈希保存；该记录不可修改或删除。'); await onUpdated();
-    } catch (error) { setNotice(error.message); } finally { setBusy(false); }
+      setNotice('原始来源已按内容哈希保存；该记录不可修改或删除。'); setNoticeKind('success'); await onUpdated();
+    } catch (error) { setNotice(error.message); setNoticeKind('error'); } finally { setBusy(false); }
   };
   const retryIndex = async () => {
-    setBusy(true); setNotice('');
+    setBusy(true); setNotice(''); setNoticeKind('info');
     try {
       await request(`/api/catalog/admin/metrics/${metric.id}/wiki-index/retry`, { method: 'POST' });
-      setNotice('已重新提交 Wiki 检索索引任务。'); await onUpdated();
-    } catch (error) { setNotice(error.message); } finally { setBusy(false); }
+      setNotice('已重新提交 Wiki 检索索引任务。'); setNoticeKind('success'); await onUpdated();
+    } catch (error) { setNotice(error.message); setNoticeKind('error'); } finally { setBusy(false); }
   };
   const publish = async () => {
-    setBusy(true); setNotice('');
+    setBusy(true); setNotice(''); setNoticeKind('info');
     try {
       await request(`/api/catalog/admin/metrics/${metric.id}/publish`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -50,8 +52,8 @@ function MetricCard({ metric, metrics, onUpdated }) {
           contract: JSON.parse(contract), wiki: { summary: wiki.summary || '', content: wiki.content || '',
             related_metric_ids: wiki.related_metric_ids || [], claims: JSON.parse(claims) } }),
       });
-      setEditing(false); setNotice('口径已审核发布。'); await onUpdated();
-    } catch (error) { setNotice(error.message); } finally { setBusy(false); }
+      setEditing(false); setNotice('口径已审核发布。'); setNoticeKind('success'); await onUpdated();
+    } catch (error) { setNotice(error.message); setNoticeKind('error'); } finally { setBusy(false); }
   };
   return <article>
     <span className="asset-eyebrow">{metric.name} · v{metric.catalog_version}</span>
@@ -70,7 +72,7 @@ function MetricCard({ metric, metrics, onUpdated }) {
       <small>依据：{(metric.wiki.source_refs || []).join('、')}</small>
     </details>}
     {metric.can_manage && <div><button className="outline-button" disabled={busy} onClick={() => setEditing(!editing)}>审核口径</button>{' '}
-      <button className="outline-button" disabled={busy} onClick={generate}>{busy ? '处理中…' : '生成 Wiki 草稿'}</button></div>}
+      <button className="outline-button" disabled={busy} onClick={generate}>{busy ? '处理中…' : draftGenerationFailed ? '重新生成草稿' : '生成 Wiki 草稿'}</button></div>}
     {editing && metric.can_manage && <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
       <label>指标别名<input style={{ width: '100%' }} value={aliases} onChange={e => setAliases(e.target.value)} /></label>
       <label>执行契约（JSON）<textarea aria-label="执行契约" rows={14} style={{ width: '100%', fontFamily: 'monospace' }} value={contract} onChange={e => setContract(e.target.value)} /></label>
@@ -96,7 +98,7 @@ function MetricCard({ metric, metrics, onUpdated }) {
         <button className="outline-button" disabled={busy || !source.title.trim() || !source.content.trim()} onClick={saveSource}>保存不可变来源</button>
       </details>
     </div>}
-    {notice && <p role="status">{notice}</p>}
+    {notice && <p role="status" className={`metric-notice ${noticeKind}`}>{notice}</p>}
   </article>;
 }
 

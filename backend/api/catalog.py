@@ -7,6 +7,9 @@ from backend.catalog.publications import publish_asset, publish_assets, require_
 from backend.catalog.retrieval import catalog_overview, lineage_for_asset
 from backend.catalog.service import get_asset, list_assets, list_domains, list_metrics, list_terms, sample_asset
 from backend.catalog.review import AssetReview, ReviewDecision, save_review, change_status
+from backend.model_client import ModelOutputError
+from backend.model_reliability import ModelProviderError
+from backend.observability import log_event
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 from backend.semantic_metrics.wiki import (
@@ -16,7 +19,20 @@ from backend.semantic_metrics.wiki import (
 
 @router.post('/admin/metrics/{metric_id}/wiki-draft')
 async def metric_wiki_draft(metric_id: str, user: dict = Depends(require_user)):
-    return await generate_draft(metric_id,user['id'])
+    try:
+        return await generate_draft(metric_id, user['id'])
+    except ModelProviderError as exc:
+        log_event('api.metric_wiki_draft_error', level=30, metric_id=metric_id, code=exc.code, http_status=exc.status)
+        if exc.code == 'model_deadline_exceeded':
+            detail = '生成 Wiki 草稿超时，系统已自动重试一次仍未完成。请稍后点击“重新生成草稿”；原指标和已发布口径未受影响。'
+        elif exc.status == 429:
+            detail = '模型服务当前请求较多，系统已自动重试一次。请稍后点击“重新生成草稿”；原指标和已发布口径未受影响。'
+        else:
+            detail = '模型服务暂时无法连接或响应超时，系统已自动重试一次仍未成功。请稍后点击“重新生成草稿”；原指标和已发布口径未受影响。'
+        raise HTTPException(status_code=503, detail=detail) from exc
+    except ModelOutputError as exc:
+        log_event('api.metric_wiki_draft_error', level=30, metric_id=metric_id, code='invalid_model_output')
+        raise HTTPException(status_code=422, detail='模型生成的草稿格式或引用证据未通过校验。系统已自动修正一次仍未成功，请重新生成或补充更完整的原始来源。') from exc
 
 
 @router.post('/admin/metrics/{metric_id}/wiki-sources')
