@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -100,7 +100,26 @@ function MetricCard({ metric, metrics, onUpdated }) {
   </article>;
 }
 
-export default function MetricCenter({ metrics, onUpdated }) {
-  return <><p className="page-subtitle">先确定指标口径，再查询数据。Wiki 解释业务差异；已认证的执行契约固定计算公式与过滤条件。</p>
-    <div className="metric-grid">{metrics.map(metric => <MetricCard key={`${metric.id}:${metric.catalog_version}`} metric={metric} metrics={metrics} onUpdated={onUpdated} />)}</div></>;
+export default function MetricCenter({ metrics = [], domains = [], onUpdated }) {
+  const [domainId, setDomainId] = useState('all');
+  const [query, setQuery] = useState('');
+  const domainById = useMemo(() => new Map(domains.map(domain => [domain.id, domain])), [domains]);
+  const visibleMetrics = useMemo(() => metrics.filter(metric => {
+    const haystack = `${metric.display_name} ${metric.name} ${metric.description} ${(metric.aliases || []).join(' ')}`.toLowerCase();
+    return (domainId === 'all' || metric.domain_id === domainId) && (!query.trim() || haystack.includes(query.trim().toLowerCase()));
+  }), [metrics, domainId, query]);
+  const groups = useMemo(() => {
+    const grouped = new Map();
+    visibleMetrics.forEach(metric => { const id = metric.domain_id || 'unassigned'; if (!grouped.has(id)) grouped.set(id, []); grouped.get(id).push(metric); });
+    return [...grouped.entries()].map(([id, items]) => ({ id, items, domain: domainById.get(id) })).sort((a, b) => (a.domain?.display_name || a.id).localeCompare(b.domain?.display_name || b.id, 'zh-CN'));
+  }, [visibleMetrics, domainById]);
+  const certified = metrics.filter(metric => metric.certification_status === 'certified').length;
+  const count = id => metrics.filter(metric => metric.domain_id === id).length;
+  return <section className="metric-library">
+    <header className="metric-library-header"><div><span className="metric-library-eyebrow">METRIC LIBRARY</span><h2>指标中心</h2><p>按业务域管理已治理指标。查询优先使用已认证口径，避免公式和过滤条件在问答中被临时改写。</p></div><div className="metric-library-summary"><b>{metrics.length}</b><span>可见指标</span><em>{certified} 个已认证</em></div></header>
+    <div className="metric-library-controls"><label><span>搜索指标</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="名称、别名或业务说明" /></label><label><span>业务域</span><select value={domainId} onChange={event => setDomainId(event.target.value)}><option value="all">全部业务域</option>{domains.filter(domain => count(domain.id)).map(domain => <option key={domain.id} value={domain.id}>{domain.display_name}</option>)}</select></label></div>
+    <nav className="metric-domain-nav" aria-label="按业务域筛选"><button className={domainId === 'all' ? 'active' : ''} onClick={() => setDomainId('all')}>全部 <span>{metrics.length}</span></button>{domains.filter(domain => count(domain.id)).map(domain => <button key={domain.id} className={domainId === domain.id ? 'active' : ''} onClick={() => setDomainId(domain.id)}>{domain.display_name}<span>{count(domain.id)}</span></button>)}</nav>
+    {groups.map(group => <section className="metric-domain-section" key={group.id}><header><div><span>业务域</span><h3>{group.domain?.display_name || group.id}</h3>{group.domain?.description && <p>{group.domain.description}</p>}</div><b>{group.items.length} 个指标</b></header><div className="metric-grid">{group.items.map(metric => <MetricCard key={`${metric.id}:${metric.catalog_version}`} metric={metric} metrics={metrics} onUpdated={onUpdated} />)}</div></section>)}
+    {!groups.length && <div className="metric-library-empty"><b>未找到匹配指标</b><span>尝试更换关键词或选择其他业务域。</span></div>}
+  </section>;
 }
