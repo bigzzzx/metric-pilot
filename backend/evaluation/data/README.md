@@ -1,6 +1,6 @@
 # RAG 召回评测数据集
 
-`rag_recall_v1.json` 是 2026-09-17 基于本机 `.data/platform.db` 的已发布资料人工标注的第一版数据集。只包含题目、用户和标准依据；没有运行检索，也没有把检索结果当作标准答案。
+`rag_recall_v1.json` 是 2026-09-17 基于本机 `.data/platform.db` 的已发布资料人工标注的第一版数据集。包含题目、用户、可人工核对的 expected_fact 和标准依据 ID。expected_fact 来自已发布目录或知识切片，供人工复核；召回评分只使用依据 ID。
 
 - 入口是 `backend.rag.retrieve(query, limit=12, fallback=False, user_id=...)`。`username` 应先从平台数据库解析为用户 ID；缺省使用 `user1`。
 - `required_any_of` 中每个内层数组是一项必须找到的依据；数组内的文档 ID 可以互相替代。例如同一字段说明同时出现在字段文档和表文档，任意一条都算找到。多项依据必须逐项命中。
@@ -9,3 +9,11 @@
 - 题目使用当前具体数据源、表名和业务描述。数据源删除、资产重新发布、字段或切片重新入库后，先复核 ID 与内容，再用于评分。
 
 已治理指标可能由图中的 Text-to-Metrics 分支直接处理；这里的题目按检索入口测量 RAG 本身，不把完整 Agent 的路由表现算入召回率。
+
+运行当前检索：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_rag_recall.py
+```
+
+逐题报告写入 `.data/evals/rag-recall-current.json`；其中保留 `expected_fact`、返回的文档 ID、未命中的标准依据组、耗时与权限检查结果。该脚本调用真实 `backend.rag.retrieve`，不会执行 SQL 或调用回答模型。
