@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "name": "当前目录与知识库 RAG 召回评测集",
+  "created_at": "2026-09-17",
+  "entrypoint": "backend.rag.retrieve",
+  "default_username": "user1",
+  "notes": "依据来自当前平台数据库中已发布、且对指定用户可见的资料；此文件只定义题目和人工核对的标准依据，不包含检索结果或分数。required_any_of 的每个子数组代表一项必需依据，组内任一 ID 命中即可。",
+  "cases": [
+    {
+      "id": "local_orders_structure",
+      "category": "table",
+      "query": "本地电商演示数仓 orders 订单明细表有哪些可用字段？",
+      "required_any_of": [["catalog:asset:asset-orders"]]
+    },
+    {
+      "id": "local_orders_status",
+      "category": "column",
+      "query": "本地电商演示数仓 orders 的 status 字段表示什么？",
+      "required_any_of": [["catalog:column:column-orders-status", "catalog:asset:asset-orders"]]
+    },
+    {
+      "id": "local_orders_amount",
+      "category": "column",
+      "query": "本地电商演示数仓 orders.amount 是订单实付金额还是商品标价？",
+      "required_any_of": [["catalog:column:column-orders-amount", "catalog:asset:asset-orders"]]
+    },
+    {
+      "id": "local_orders_date",
+      "category": "column",
+      "query": "本地订单表的 order_date 字段记录什么日期？",
+      "required_any_of": [["catalog:column:column-orders-order_date", "catalog:asset:asset-orders"]]
+    },
+    {
+      "id": "local_users_region",
+      "category": "column",
+      "query": "本地用户维表的 region 字段是什么意思？",
+      "required_any_of": [["catalog:column:column-users-region", "catalog:asset:asset-users"]]
+    },
+    {
+      "id": "local_products_category",
+      "category": "column",
+      "query": "本地商品维表用哪个字段表示商品品类？",
+      "required_any_of": [["catalog:column:column-products-category", "catalog:asset:asset-products"]]
+    },
+    {
+      "id": "local_payment_status",
+      "category": "column",
+      "query": "本地支付明细表哪个字段表示支付状态？",
+      "required_any_of": [["catalog:column:column-dwd_payment_detail-payment_status", "catalog:asset:asset-dwd_payment_detail"]]
+    },
+    {
+      "id": "local_sales_aggregate",
+      "category": "table",
+      "query": "哪张本地汇总表按日期、区域和品类保存日销售数据？",
+      "required_any_of": [["catalog:asset:asset-dws_daily_sales"]]
+    },
+    {
+      "id": "local_raw_order_events",
+      "category": "table",
+      "query": "本地订单系统的下单、支付、取消原始事件保存在哪张表？",
+      "required_any_of": [["catalog:asset:asset-ods_order_events"]]
+    },
+    {
+      "id": "local_calendar",
+      "category": "table",
+      "query": "本地用于统一日、周、月时间口径的日期维表是什么？",
+      "required_any_of": [["catalog:asset:asset-dim_calendar"]]
+    },
+    {
+      "id": "pg_ods_orders_status",
+      "category": "column",
+      "query": "PostgreSQL 测试数仓 ods.orders 的 status 有哪些状态？",
+      "required_any_of": [["catalog:column:cddc8a55-47c9-4d8c-91a3-cd21ace628c8", "catalog:asset:d02cc8d3-538e-5b92-bbb2-5dd6f05e1b28"]]
+    },
+    {
+      "id": "pg_ods_payments_time",
+      "category": "column",
+      "query": "PostgreSQL 测试数仓 ods.payments 的 payment_time 是什么时间口径？",
+      "required_any_of": [["catalog:column:8ee28537-f1f6-4719-a9f8-ad0c7a9900ab", "catalog:asset:63194d4c-8c39-517d-9699-d35d1ec166e8"]]
+    },
+    {
+      "id": "pg_dwd_order_paid_amount",
+      "category": "column",
+      "query": "PostgreSQL 测试数仓 dwd.fact_order 的 paid_amount 是什么粒度，单位是什么？",
+      "required_any_of": [["catalog:column:792f51a8-a528-49b2-9c25-96c65cdf7087", "catalog:asset:6313d2eb-248b-53ce-80d6-75dffc2912a8"]]
+    },
+    {
+      "id": "pg_refunds_amount",
+      "category": "column",
+      "query": "PostgreSQL 测试数仓 ods.refunds 的 refund_amount 代表什么？",
+      "required_any_of": [["catalog:column:804a3a24-f0b0-45e6-b039-94e06d4c450c", "catalog:asset:0cfaf781-5fc0-5123-8696-a8bcd96bb972"]]
+    },
+    {
+      "id": "pg_campaign_roi_formula",
+      "category": "column",
+      "query": "PostgreSQL 测试数仓 ads.campaign_roi 的 roi 字段如何计算，花费为零时怎么办？",
+      "required_any_of": [["catalog:column:38213c1e-bf35-476b-9112-accf7c029b0f", "catalog:asset:0fde5213-c1df-5b6a-913d-4e42cdf36509"]]
+    },
+    {
+      "id": "pg_order_items_grain",
+      "category": "table",
+      "query": "PostgreSQL 测试数仓 ods.order_items 一行代表什么？",
+      "required_any_of": [["catalog:asset:d1816d89-e572-584e-af1e-753d7caf8515"]]
+    },
+    {
+      "id": "alias_paid_order_status",
+      "category": "paraphrase",
+      "query": "演示电商订单记录里，怎么判断一笔订单已经付款？",
+      "required_any_of": [["catalog:column:column-orders-status", "catalog:asset:asset-orders"]]
+    },
+    {
+      "id": "alias_customer_region",
+      "category": "paraphrase",
+      "query": "演示电商用户属于哪个销售大区，在什么地方看？",
+      "required_any_of": [["catalog:column:column-users-region", "catalog:asset:asset-users"]]
+    },
+    {
+      "id": "alias_raw_order_event",
+      "category": "paraphrase",
+      "query": "想追溯订单从创建到支付的源头事件，应找哪个原始资产？",
+      "required_any_of": [["catalog:asset:asset-ods_order_events"]]
+    },
+    {
+      "id": "alias_payment_occurrence_time",
+      "category": "paraphrase",
+      "query": "服务器 PostgreSQL 仓库里，每次付款真正发生的时刻记录在哪里？",
+      "required_any_of": [["catalog:column:8ee28537-f1f6-4719-a9f8-ad0c7a9900ab", "catalog:asset:63194d4c-8c39-517d-9699-d35d1ec166e8"]]
+    },
+    {
+      "id": "local_orders_users_relation",
+      "category": "relation",
+      "query": "本地演示订单表与用户维表通过什么字段关联？",
+      "required_any_of": [["catalog:relation:orders_user"]]
+    },
+    {
+      "id": "local_orders_products_relation",
+      "category": "relation",
+      "query": "本地演示订单如何关联商品维表？",
+      "required_any_of": [["catalog:relation:orders_product"]]
+    },
+    {
+      "id": "local_payments_orders_relation",
+      "category": "relation",
+      "query": "本地演示支付明细与订单表的关联条件是什么？",
+      "required_any_of": [["catalog:relation:payment_order"]]
+    },
+    {
+      "id": "local_attribution_orders_relation",
+      "category": "relation",
+      "query": "本地营销归因明细如何关联到订单？",
+      "required_any_of": [["catalog:relation:attribution_order"]]
+    },
+    {
+      "id": "pg_orders_customers_relation",
+      "category": "relation",
+      "query": "服务器 PostgreSQL 数仓的 ods.orders 和 ods.customers 如何关联？",
+      "required_any_of": [["catalog:relation:581a880d-5c1e-5772-a70a-17cad09faaa4"]]
+    },
+    {
+      "id": "pg_orders_refunds_relation",
+      "category": "relation",
+      "query": "服务器 PostgreSQL 数仓的退款记录怎么关联原订单？",
+      "required_any_of": [["catalog:relation:4511b97c-3cf2-5704-addc-8559ba388e13"]]
+    },
+    {
+      "id": "pg_orders_payments_relation",
+      "category": "relation",
+      "query": "服务器 PostgreSQL 数仓的支付记录与订单用什么字段连接？",
+      "required_any_of": [["catalog:relation:1b45c3f8-fc10-5221-ac40-81251121aa41"]]
+    },
+    {
+      "id": "local_sales_by_region_category",
+      "category": "multi_evidence",
+      "query": "用本地演示数据按用户大区、商品品类分析订单，需要哪些表和关联关系？",
+      "required_any_of": [["catalog:asset:asset-orders"], ["catalog:asset:asset-users"], ["catalog:asset:asset-products"], ["catalog:relation:orders_user"], ["catalog:relation:orders_product"]]
+    },
+    {
+      "id": "pg_orders_with_customer_region",
+      "category": "multi_evidence",
+      "query": "PostgreSQL 测试数仓按客户所属大区看订单，需要哪些表与关联关系？",
+      "required_any_of": [["catalog:asset:d02cc8d3-538e-5b92-bbb2-5dd6f05e1b28"], ["catalog:asset:e64d3db4-a5ee-5b91-a9fd-ca423cd15329"], ["catalog:relation:581a880d-5c1e-5772-a70a-17cad09faaa4"]]
+    },
+    {
+      "id": "pg_orders_with_refunds",
+      "category": "multi_evidence",
+      "query": "PostgreSQL 测试数仓分析订单和退款记录，需要哪两张表及其关联？",
+      "required_any_of": [["catalog:asset:d02cc8d3-538e-5b92-bbb2-5dd6f05e1b28"], ["catalog:asset:0cfaf781-5fc0-5123-8696-a8bcd96bb972"], ["catalog:relation:4511b97c-3cf2-5704-addc-8559ba388e13"]]
+    },
+    {
+      "id": "knowledge_at42_rule",
+      "category": "knowledge_chunk",
+      "query": "附件验收规则 AT-42 是否统计退款订单？",
+      "required_any_of": [["f44919f1-b630-5549-b00e-6baae10d2cba"]]
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "user2_denied_marketing_dashboard",
+      "category": "permission",
+      "username": "user2",
+      "query": "本地营销 ROI 看板表有哪些字段？",
+      "forbidden_ids": ["catalog:asset:asset-ads_campaign_roi"]
+    },
+    {
+      "id": "user2_denied_pg_campaign_roi",
+      "category": "permission",
+      "username": "user2",
+      "query": "服务器 PostgreSQL 测试数仓 ads.campaign_roi 的 roi 字段怎么算？",
+      "forbidden_ids": ["catalog:asset:0fde5213-c1df-5b6a-913d-4e42cdf36509", "catalog:column:38213c1e-bf35-476b-9112-accf7c029b0f"]
+    },
+    {
+      "id": "unknown_table",
+      "category": "no_answer",
+      "query": "虚构的 ods.moon_orders 表有哪些字段？",
+      "forbidden_ids": [],
+      "expected_outcome": "no_supported_evidence"
+    }
+  ]
+}
