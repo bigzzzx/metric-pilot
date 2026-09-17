@@ -43,3 +43,13 @@ def test_query_trace_is_bounded_and_omits_prompts_credentials_and_rows():
 
 def test_general_chat_without_data_evidence_has_no_query_trace():
     assert build_query_trace({"route": "general", "final": {"answer": "你好"}}) is None
+
+
+def test_query_trace_shows_only_rewrite_used_by_retrieval():
+    state = {
+        "route": "data_query", "rag": [{"id": "source-a", "kind": "table", "title": "orders"}],
+        "retrieval_query": "paid GMV month 9", "retrieval_query_used": "paid GMV month 9",
+    }
+    assert build_query_trace(state)["retrieval_query"] == "paid GMV month 9"
+    state["retrieval_query_used"] = "original question with context"
+    assert build_query_trace(state)["retrieval_query"] == ""

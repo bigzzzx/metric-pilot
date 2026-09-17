@@ -41,6 +41,7 @@ class RouteOutput(ModelOutput):
         "none", "recent_data_topic", "recent_query_result", "conversation_summary"
     ] = "none"
     requires_data_evidence: bool = False
+    retrieval_query: str | None = Field(default=None, max_length=300)
     memory_retrieval: Literal["none", "search"] = "none"
     memory_query: str | None = Field(default=None, max_length=300)
     memory_actions: list[MemoryAction] = Field(default_factory=list, max_length=3)

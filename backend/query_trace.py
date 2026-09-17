@@ -89,6 +89,11 @@ def build_query_trace(state: dict) -> dict[str, Any] | None:
         "route": state.get("route"),
         "route_source": state.get("route_source"),
         "contextual_follow_up": bool(state.get("contextual_follow_up")),
+        "retrieval_query": (
+            str(state.get("retrieval_query_used") or "")[:300]
+            if state.get("retrieval_query_used") == state.get("retrieval_query")
+            else ""
+        ),
         "sources": _sources(state.get("rag") or []),
         "verified_tables": _tables(state.get("verified_schemas") or {}),
         "metric_refs": plan.get("metric_refs") or [],

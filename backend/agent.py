@@ -138,6 +138,7 @@ async def router(state: AgentOverallState) -> AgentOverallState:
             "route": "general",
             "route_source": "fast_path",
             "contextual_follow_up": False,
+            "retrieval_query": None,
             "context_reference": "none",
             "requires_data_evidence": False,
             "memory_actions": [],
@@ -155,6 +156,7 @@ async def router(state: AgentOverallState) -> AgentOverallState:
             "route": "data_query",
             "route_source": "fast_path",
             "contextual_follow_up": False,
+            "retrieval_query": None,
             "context_reference": "none",
             "requires_data_evidence": True,
             "memory_actions": [],
@@ -171,8 +173,9 @@ async def router(state: AgentOverallState) -> AgentOverallState:
     available_mcp_tools = tool_catalog_for_router()
     prompt = f'''You are a strict request router. Recent successful query result exists: {has_result}.
 The supplied messages include a conversation summary and recent conversation. Resolve contextual references such as “它”, “这个”, “刚才的”, “那”, and “照前面的” before choosing a route.
-Return JSON only: {{"route":"general|data_query|data_analysis|data_write|etl","contextual_follow_up":true|false,"context_reference":"none|recent_data_topic|recent_query_result|conversation_summary","requires_data_evidence":true|false,"memory_retrieval":"none|search","memory_query":"search query or null","memory_actions":[],"skill_ids":[],"tool_call":null}}.
+Return JSON only: {{"route":"general|data_query|data_analysis|data_write|etl","contextual_follow_up":true|false,"context_reference":"none|recent_data_topic|recent_query_result|conversation_summary","requires_data_evidence":true|false,"retrieval_query":"standalone retrieval question or null","memory_retrieval":"none|search","memory_query":"search query or null","memory_actions":[],"skill_ids":[],"tool_call":null}}.
 Set contextual_follow_up=true only when the current request needs prior conversation to be understood or answered correctly. Set context_reference to the most relevant source; otherwise use none.
+For a contextual data_query or data_analysis needing retrieval, set retrieval_query to one short standalone Chinese search question resolving references from the recent conversation. Preserve explicit dates, business domain, data source, metric name, filters and negation from the current question. Add only facts explicitly supported by the conversation. Do not select between ambiguous metric definitions, infer a formula, or assert an answer. If ambiguous or self-contained, use null. For other routes use null.
 Set requires_data_evidence=true only when the answer must verify platform facts such as a metric definition, catalog metadata, table/field details, business data, SQL results, or an ETL state. A contextual explanation may use the conversation context without requiring data evidence.
 Use data_analysis ONLY when a recent query result exists AND the user is asking to interpret, compare,
 explain, or extend that result. Use data_query only when the user needs platform-specific metadata, metric definitions,
@@ -207,7 +210,7 @@ For example changing a line to a bar uses the existing result; changing daily to
 Never set visualization_only for greetings, explanations of charts, writes, or file questions.
 Existing result fields and types: ''' + json.dumps(visualization_profile(state.get("last_query_result") or []), ensure_ascii=False)
     route_identity = {
-        "contract": "router-v2-visualization",
+        "contract": "router-v3-retrieval-query",
         "context": _cache_conversation_context(state),
         "has_result": has_result,
         "memory_tools_enabled": memory_tools_enabled,
@@ -246,6 +249,7 @@ Existing result fields and types: ''' + json.dumps(visualization_profile(state.g
     if route not in {"general", "data_query", "data_analysis", "data_write", "etl", "attachment"}:
         route = "general"
     contextual_follow_up = bool(decision.get("contextual_follow_up", False))
+    retrieval_query = (str(decision.get("retrieval_query") or "").strip() or None) if contextual_follow_up and route in {"data_query", "data_analysis"} else None
     context_reference = str(decision.get("context_reference") or "none")
     requires_data_evidence = bool(decision.get("requires_data_evidence", False))
     if route in {"data_query", "data_analysis", "data_write", "etl"}:
@@ -285,6 +289,7 @@ Existing result fields and types: ''' + json.dumps(visualization_profile(state.g
         "route": route,
         "route_source": "model",
         "contextual_follow_up": contextual_follow_up,
+        "retrieval_query": retrieval_query,
         "context_reference": context_reference,
         "requires_data_evidence": requires_data_evidence,
         "memory_actions": actions,
@@ -403,18 +408,19 @@ async def general_agent(state: AgentOverallState) -> AgentOverallState:
 async def rag_retrieve(state: AgentOverallState) -> AgentOverallState:
     started_at = time.perf_counter()
     agent_id = _agent_for_route(state.get("route", "data_query"))
+    search_query = retrieval_question(state)
     result = tool_executor.invoke(
-        "catalog_rag", {"query": retrieval_question(state), "limit": 12},
+        "catalog_rag", {"query": search_query, "limit": 12},
         _tool_context(state, "catalog_rag", agent_id),
     )
     if result.status is not ToolStatus.SUCCESS:
         error = result.error.model_dump(mode="json") if result.error else None
         _log_node_duration("rag", started_at, status="unavailable")
-        return {**state, "rag": [], **({"permission_error": error} if error else {})}
+        return {**state, "rag": [], "retrieval_query_used": search_query, **({"permission_error": error} if error else {})}
     rag = result.data["chunks"]
     log_event("agent.rag", node="rag", chunks=len(rag))
     _log_node_duration("rag", started_at, chunks=len(rag))
-    return {**state, "rag": rag}
+    return {**state, "rag": rag, "retrieval_query_used": search_query}
 
 
 async def data_query_agent(state: AgentOverallState) -> AgentOverallState:

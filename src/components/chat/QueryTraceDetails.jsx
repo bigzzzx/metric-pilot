@@ -61,6 +61,7 @@ export default function QueryTraceDetails({ trace }) {
   return <details className="query-trace"><summary>查看依据与执行过程 <span>{sourceCount} 条依据 · {tableCount} 张表</span></summary>
     <div className="query-trace-body">
       <div className="trace-overview"><span>路由：{trace.route || 'data_query'}</span>{trace.contextual_follow_up && <span>已结合上文</span>}</div>
+      {trace.retrieval_query && <p>检索问题：{trace.retrieval_query}</p>}
       {trace.query_mode && <p>查询方式：{trace.query_mode === 'text_to_metrics' ? '已治理指标查询（Text-to-Metrics）' : '探索查询（Text-to-SQL）'}</p>}
       <SourceList sources={trace.sources} />
       <VerifiedTables tables={trace.verified_tables} />

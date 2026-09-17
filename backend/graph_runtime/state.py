@@ -44,6 +44,8 @@ class AgentOutputState(TypedDict, total=False):
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
+    retrieval_query: str | None
+    retrieval_query_used: str
     node_trace: list[dict]
 
 
@@ -53,6 +55,8 @@ class AgentOverallState(AgentInputState, AgentOutputState, total=False):
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
+    retrieval_query: str | None
+    retrieval_query_used: str
     context_reference: Literal["none", "recent_data_topic", "recent_query_result", "conversation_summary"]
     requires_data_evidence: bool
     query_error: str

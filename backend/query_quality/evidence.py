@@ -7,7 +7,7 @@ from backend.catalog.rag_documents import authorized_catalog_documents
 
 
 def retrieval_question(state: dict) -> str:
-    """Expand an explicitly contextual turn without an additional model call."""
+    """Use a grounded router rewrite, or the bounded history expansion."""
     question = state["message"]
     if not state.get("contextual_follow_up"):
         return question
@@ -15,6 +15,16 @@ def retrieval_question(state: dict) -> str:
               if item.get("role") == "user" and not item.get("content", "").startswith("Tool result:")]
     context = "\n".join(recent[-2:])[-800:]
     summary = str(state.get("conversation_summary") or "")[-400:]
+    rewritten = str(state.get("retrieval_query") or "").strip()
+    source = f"{question}\n{context}\n{summary}".casefold()
+    # Reject new dates, counts, qualified tables and acronym metric names.
+    # Explicit identifiers in the current request must survive the rewrite.
+    concrete = re.compile(r"\d+(?:[./:-]\d+)*|(?<![a-z0-9_])[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*(?![a-z0-9_])|(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]{1,}(?![A-Za-z0-9_])")
+    required = {token.casefold() for token in concrete.findall(question)}
+    found = {token.casefold() for token in concrete.findall(rewritten)}
+    if (rewritten and len(rewritten) <= 300 and "\n" not in rewritten
+            and required <= found and all(token in source for token in found)):
+        return rewritten
     return f"{question}\n最近数据话题：{context}\n会话摘要：{summary}"
 
 
