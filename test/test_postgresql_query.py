@@ -29,6 +29,7 @@ def pg(catalog, monkeypatch):
     'SELECT count(*) AS n FROM ods.orders',
     'SELECT o.order_id, sum(o.amount) FROM ods.orders o GROUP BY o.order_id',
     "SELECT date_trunc('month', created_at),sum(amount) FROM ods.orders GROUP BY 1",
+    'SELECT DATE(created_at),count(*) FROM ods.orders GROUP BY 1',
     "SELECT sum(amount)-1 FROM ods.orders WHERE amount>=0 AND created_at>='2026-08-01'",
     'WITH x AS (SELECT amount FROM ods.orders) SELECT sum(amount) FROM x',
     'SELECT a.order_id FROM ods.orders a JOIN ods.orders b ON a.order_id=b.order_id',

@@ -325,6 +325,7 @@ def model_diagnostics(state: dict) -> dict[str, Any]:
 
 async def _run_model_case(case: PostgreSQLCase, user_id: str, source_id: str) -> dict[str, Any]:
     from backend.agent import run_agent_stream
+    from backend.conversations import create_conversation
     started = time.perf_counter()
     first_token_ms = None
     nodes = []
@@ -334,11 +335,16 @@ async def _run_model_case(case: PostgreSQLCase, user_id: str, source_id: str) ->
         item["content"] = item.get("content", "").replace(
             "b882d48b-8a6e-4ae4-8bfa-a7baeaf05c0d", source_id)
     question = f"使用 PostgreSQL 测试数仓回答。{case.question}"
+    conversation_id = f"postgres-eval-{case.id}"
     try:
+        # The production router inspects conversation-scoped attachments before
+        # choosing a route. Acceptance runs must therefore use the same valid
+        # conversation lifecycle as a real chat request.
+        create_conversation(user_id, conversation_id)
         async with asyncio.timeout(120):
             async for event in run_agent_stream(
                 question, "data-query-agent", history, user_id=user_id,
-                conversation_id=f"postgres-eval-{case.id}",
+                conversation_id=conversation_id,
             ):
                 if event["event"] == "delta" and first_token_ms is None:
                     first_token_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -397,16 +403,19 @@ def _stability_passed(case: PostgreSQLStabilityCase, state: dict) -> tuple[bool,
 
 async def _run_stability_case(case: PostgreSQLStabilityCase, user_id: str, source_id: str) -> dict[str, Any]:
     from backend.agent import run_agent_stream
+    from backend.conversations import create_conversation
     started = time.perf_counter()
     first_token_ms = None
     nodes = []
     state = None
+    conversation_id = f"postgres-stability-{case.id}"
     try:
+        create_conversation(user_id, conversation_id)
         async with asyncio.timeout(120):
             async for event in run_agent_stream(
                 f"使用 PostgreSQL 测试数仓回答。{case.question}",
                 "data-query-agent", [dict(item) for item in case.history], user_id=user_id,
-                conversation_id=f"postgres-stability-{case.id}",
+                conversation_id=conversation_id,
             ):
                 if event["event"] == "delta" and first_token_ms is None:
                     first_token_ms = round((time.perf_counter() - started) * 1000, 2)
