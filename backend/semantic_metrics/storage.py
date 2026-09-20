@@ -16,8 +16,19 @@ def migrate(con):
         id TEXT PRIMARY KEY, metric_id TEXT NOT NULL, source_type TEXT NOT NULL,
         title TEXT NOT NULL, source_uri TEXT NOT NULL DEFAULT '', content TEXT NOT NULL,
         content_hash TEXT NOT NULL, created_by TEXT NOT NULL,
+        original_filename TEXT NOT NULL DEFAULT '', media_type TEXT NOT NULL DEFAULT '',
+        storage_path TEXT NOT NULL DEFAULT '', byte_size INTEGER NOT NULL DEFAULT 0,
+        parser_name TEXT NOT NULL DEFAULT '', warnings_json TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(metric_id,content_hash))''')
+    source_columns = {row['name'] for row in con.execute('PRAGMA table_info(metric_wiki_sources)')}
+    for name, definition in [
+        ('original_filename', "TEXT NOT NULL DEFAULT ''"), ('media_type', "TEXT NOT NULL DEFAULT ''"),
+        ('storage_path', "TEXT NOT NULL DEFAULT ''"), ('byte_size', 'INTEGER NOT NULL DEFAULT 0'),
+        ('parser_name', "TEXT NOT NULL DEFAULT ''"), ('warnings_json', "TEXT NOT NULL DEFAULT '[]'"),
+    ]:
+        if name not in source_columns:
+            con.execute(f'ALTER TABLE metric_wiki_sources ADD COLUMN {name} {definition}')
     con.execute('''CREATE INDEX IF NOT EXISTS idx_metric_wiki_sources_metric
         ON metric_wiki_sources(metric_id,created_at)''')
     # Raw evidence is append-only. Corrections create a new source record so every

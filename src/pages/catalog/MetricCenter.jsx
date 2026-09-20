@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -18,6 +18,8 @@ function MetricCard({ metric, metrics, onUpdated }) {
   const [wiki, setWiki] = useState(metric.wiki_draft?.content ? metric.wiki_draft : metric.wiki || { summary: '', content: '', related_metric_ids: [], claims: [] });
   const [claims, setClaims] = useState(JSON.stringify((metric.wiki_draft?.content ? metric.wiki_draft : metric.wiki)?.claims || [], null, 2));
   const [source, setSource] = useState({ source_type: 'business_document', title: '', source_uri: '', content: '' });
+  const [sourceFile, setSourceFile] = useState(null);
+  const sourceFileInput = useRef(null);
   const generate = async () => {
     setBusy(true); setNotice(''); setNoticeKind('info'); setDraftGenerationFailed(false);
     try {
@@ -34,6 +36,18 @@ function MetricCard({ metric, metrics, onUpdated }) {
       });
       setSource({ source_type: 'business_document', title: '', source_uri: '', content: '' });
       setNotice('原始来源已按内容哈希保存；该记录不可修改或删除。'); setNoticeKind('success'); await onUpdated();
+    } catch (error) { setNotice(error.message); setNoticeKind('error'); } finally { setBusy(false); }
+  };
+  const uploadSourceFile = async () => {
+    if (!sourceFile) return;
+    setBusy(true); setNotice(''); setNoticeKind('info');
+    try {
+      const form = new FormData();
+      form.append('file', sourceFile);
+      const result = await request(`/api/catalog/admin/metrics/${metric.id}/wiki-sources/upload`, { method: 'POST', body: form });
+      setSourceFile(null);
+      if (sourceFileInput.current) sourceFileInput.current.value = '';
+      setNotice(`已上传并关联“${result.original_filename || result.title}”。该原文件和来源记录将保持不可变。`); setNoticeKind('success'); await onUpdated();
     } catch (error) { setNotice(error.message); setNoticeKind('error'); } finally { setBusy(false); }
   };
   const retryIndex = async () => {
@@ -86,7 +100,9 @@ function MetricCard({ metric, metrics, onUpdated }) {
       <details open>
         <summary>不可变原始来源（{metric.wiki_sources?.length || 0}）</summary>
         {(metric.wiki_sources || []).map(item => <p key={item.id}><strong>{item.title}</strong><br />
-          <small>{item.id} · {item.source_type} · SHA-256 {item.content_hash}<br />{item.source_uri || '无外部地址'}</small></p>)}
+          <small>{item.id} · {item.source_type} · SHA-256 {item.content_hash}<br />{item.original_filename && <>文件：{item.original_filename}{item.byte_size ? ` · ${(item.byte_size / 1024).toFixed(1)} KB` : ''}<br /></>}{item.source_uri || '无外部地址'}</small></p>)}
+        <div className="metric-source-upload"><b>上传正式口径文件</b><small>支持 PDF、Word、Excel、PPT、HTML、Markdown、TXT、SQL、JSON、YAML、CSV，单文件最大 20 MB。</small><input ref={sourceFileInput} aria-label="选择指标口径文件" type="file" accept=".pdf,.docx,.xlsx,.pptx,.html,.htm,.md,.markdown,.txt,.sql,.json,.yaml,.yml,.csv" onChange={event => setSourceFile(event.target.files?.[0] || null)} />{sourceFile && <span>已选择：{sourceFile.name}</span>}<button type="button" className="outline-button" disabled={busy || !sourceFile} onClick={uploadSourceFile}>{busy ? '上传中…' : '上传并关联当前指标'}</button></div>
+        <div className="metric-source-manual"><b>或手动录入来源</b>
         <label>来源类型<select value={source.source_type} onChange={e => setSource({ ...source, source_type: e.target.value })}>
           <option value="business_document">业务口径文档</option><option value="sql_definition">历史 SQL 定义</option>
           <option value="meeting_record">会议确认记录</option><option value="knowledge_document">知识库文档</option>
@@ -95,7 +111,7 @@ function MetricCard({ metric, metrics, onUpdated }) {
         <label>来源标题<input style={{ width: '100%' }} value={source.title} onChange={e => setSource({ ...source, title: e.target.value })} /></label>
         <label>来源地址（可选）<input style={{ width: '100%' }} value={source.source_uri} onChange={e => setSource({ ...source, source_uri: e.target.value })} /></label>
         <label>原始内容<textarea rows={8} style={{ width: '100%' }} value={source.content} onChange={e => setSource({ ...source, content: e.target.value })} /></label>
-        <button className="outline-button" disabled={busy || !source.title.trim() || !source.content.trim()} onClick={saveSource}>保存不可变来源</button>
+        <button type="button" className="outline-button" disabled={busy || !source.title.trim() || !source.content.trim()} onClick={saveSource}>保存不可变来源</button></div>
       </details>
     </div>}
     {notice && <p role="status" className={`metric-notice ${noticeKind}`}>{notice}</p>}

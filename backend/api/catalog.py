@@ -1,6 +1,7 @@
 """Authenticated HTTP routes for the governed data catalog."""
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.concurrency import run_in_threadpool
 
 from backend.auth import require_user
 from backend.catalog.publications import publish_asset, publish_assets, require_catalog_admin
@@ -9,11 +10,12 @@ from backend.catalog.service import get_asset, list_assets, list_domains, list_m
 from backend.catalog.review import AssetReview, ReviewDecision, save_review, change_status
 from backend.model_client import ModelOutputError
 from backend.model_reliability import ModelProviderError
+from backend.knowledge.models import DocumentIngestionError
 from backend.observability import log_event
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 from backend.semantic_metrics.wiki import (
-    MetricReview, WikiSourceInput, add_source, generate_draft, publish, retry_index, run_index_job,
+    MetricReview, WikiSourceInput, add_source, generate_draft, publish, retry_index, run_index_job, upload_source_file,
 )
 
 
@@ -39,6 +41,19 @@ async def metric_wiki_draft(metric_id: str, user: dict = Depends(require_user)):
 def metric_wiki_source(metric_id: str, payload: WikiSourceInput, user: dict = Depends(require_user)):
     return add_source(metric_id, user['id'], payload)
 
+
+@router.post('/admin/metrics/{metric_id}/wiki-sources/upload')
+async def upload_metric_wiki_source(metric_id: str, file: UploadFile = File(...), user: dict = Depends(require_user)):
+    try:
+        data = await file.read(20 * 1024 * 1024 + 1)
+        return await run_in_threadpool(upload_source_file, metric_id, user['id'], file.filename or '', file.content_type, data)
+    except DocumentIngestionError as exc:
+        status = 413 if exc.code == 'file_too_large' else 415 if exc.code in {'unsupported_format', 'file_type_mismatch'} else 422
+        raise HTTPException(status, exc.message) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    finally:
+        await file.close()
 
 @router.put('/admin/metrics/{metric_id}/publish')
 def publish_metric(metric_id: str, payload: MetricReview, background_tasks: BackgroundTasks,

@@ -72,6 +72,13 @@ npm run api
 
 `.env` 中应配置 `VECTOR_STORE_BACKEND=milvus`、`MILVUS_URI=http://127.0.0.1:19530`、`MILVUS_DATABASE=data_agent` 与 `MILVUS_COLLECTION=knowledge_chunks_bge_small_zh_v1`。运行 `scripts/start-milvus-tunnel.ps1` 会同时建立 Milvus、BGE embedding 和 reranker 的安全隧道。知识库检索采用 BGE 稠密召回 + 中文 BM25 + RRF 融合 + cross-encoder 重排；若重排服务暂时不可用，会自动退回 RRF，不影响基础查询。若需要纯本地单元测试，可临时设为 `VECTOR_STORE_BACKEND=sqlite`、`EMBEDDING_BACKEND=hash` 与 `RERANK_BACKEND=none`。
 
+## 指标口径原始文件
+
+在“数据目录 → 指标中心 → 审核口径”中，管理员可以为单个指标上传正式口径材料。支持 PDF、DOCX、XLSX、PPTX、HTML、Markdown、TXT、SQL、JSON、YAML 和 CSV，单文件最大 20 MiB。系统保留原始二进制文件、提取出的文本、文件哈希、解析器与告警信息，并将它们作为不可变的证据来源关联到指标；同一指标上传相同文件会按 SHA-256 去重。
+
+开发环境把原始文件保存到 `.data/metric-sources/`，关联元数据保存在 `.data/platform.db` 的 `metric_wiki_sources`。这些材料不会自动写入通用知识库或 RAG；只有经人工核对并发布的指标 Wiki 才会进入检索索引，避免未审核材料直接影响问答口径。
+
+生产部署时应把 `SourceStorage` 的原文件存储实现替换为 MinIO、S3 或其他对象存储：数据库仍保存不可变的来源元数据、内容哈希和对象路径，前端的上传操作、后端 API 以及“文件—指标”的关联关系无需改变。对象存储凭据只保存在服务端，浏览器不直接访问桶。
 ## 会话与记忆
 
 - 所有会话与完整消息持久化在 `.data/platform.db`，刷新或重启不会丢失。

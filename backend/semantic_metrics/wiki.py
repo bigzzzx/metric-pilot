@@ -10,9 +10,11 @@ from pydantic import Field
 
 from backend.catalog.service import DISCOVER, MANAGE, can_access
 from backend.core import db
+from backend.knowledge.source_storage import source_fingerprint
 from backend.model_client import complete_structured
 from backend.semantic_metrics.compiler import validate_expression
 from backend.semantic_metrics.models import ContractModel, MetricContract
+from backend.semantic_metrics.source_files import ingest_uploaded_metric_source, remove_uploaded_metric_source
 
 
 class WikiClaim(ContractModel):
@@ -39,7 +41,7 @@ class MetricReview(ContractModel):
 class WikiSourceInput(ContractModel):
     source_type: Literal[
         "catalog_snapshot", "business_document", "sql_definition",
-        "meeting_record", "knowledge_document", "manual",
+        "meeting_record", "knowledge_document", "uploaded_document", "manual",
     ] = "business_document"
     title: str = Field(min_length=1, max_length=300)
     source_uri: str = Field(default="", max_length=1000)
@@ -57,6 +59,7 @@ def _source_hash(content: str) -> str:
 
 def _source_view(row, *, include_content: bool = True) -> dict:
     item = dict(row)
+    item["warnings"] = json.loads(item.pop("warnings_json", "[]") or "[]")
     if not include_content:
         item.pop("content", None)
     return item
@@ -72,9 +75,10 @@ def source_records(con, metric_id: str, *, include_content: bool = True) -> list
     ]
 
 
-def _insert_source(con, metric_id: str, user_id: str, payload: WikiSourceInput, *, source_id: str | None = None) -> dict:
+def _insert_source(con, metric_id: str, user_id: str, payload: WikiSourceInput, *, source_id: str | None = None,
+                   content_hash: str | None = None, file_metadata: dict | None = None) -> dict:
     content = payload.content.strip()
-    digest = _source_hash(content)
+    digest = content_hash or _source_hash(content)
     existing = con.execute(
         "SELECT * FROM metric_wiki_sources WHERE metric_id=? AND content_hash=?",
         (metric_id, digest),
@@ -82,12 +86,17 @@ def _insert_source(con, metric_id: str, user_id: str, payload: WikiSourceInput, 
     if existing:
         return _source_view(existing)
     identifier = source_id or f"wiki-source:{metric_id}:{digest[:20]}"
+    metadata = file_metadata or {}
     con.execute(
         """INSERT INTO metric_wiki_sources(
-            id,metric_id,source_type,title,source_uri,content,content_hash,created_by)
-            VALUES (?,?,?,?,?,?,?,?)""",
+            id,metric_id,source_type,title,source_uri,content,content_hash,created_by,
+            original_filename,media_type,storage_path,byte_size,parser_name,warnings_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (identifier, metric_id, payload.source_type, payload.title.strip(),
-         payload.source_uri.strip(), content, digest, user_id),
+         payload.source_uri.strip(), content, digest, user_id,
+         metadata.get("original_filename", ""), metadata.get("media_type", ""),
+         metadata.get("storage_path", ""), int(metadata.get("byte_size", 0)),
+         metadata.get("parser_name", ""), json.dumps(metadata.get("warnings", []), ensure_ascii=False)),
     )
     con.execute(
         """INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json)
@@ -110,6 +119,42 @@ def add_source(metric_id: str, user_id: str, payload: WikiSourceInput) -> dict:
     finally:
         con.close()
 
+def upload_source_file(metric_id: str, user_id: str, filename: str, media_type: str | None, data: bytes) -> dict:
+    """Upload one immutable business-source file and associate it with a metric."""
+    _, content_hash = source_fingerprint(data)
+    con = db()
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        require_admin(con, user_id)
+        if not con.execute("SELECT 1 FROM catalog_metrics WHERE id=?", (metric_id,)).fetchone():
+            raise HTTPException(404, "Metric not found")
+        existing = con.execute("SELECT * FROM metric_wiki_sources WHERE metric_id=? AND content_hash=?", (metric_id, content_hash)).fetchone()
+        if existing:
+            con.commit()
+            return _source_view(existing)
+        con.commit()
+    finally:
+        con.close()
+
+    uploaded = ingest_uploaded_metric_source(metric_id=metric_id, user_id=user_id, filename=filename, media_type=media_type, data=data)
+    try:
+        con = db()
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            require_admin(con, user_id)
+            result = _insert_source(
+                con, metric_id, user_id,
+                WikiSourceInput(source_type="uploaded_document", title=uploaded.filename, source_uri=f"file:{uploaded.storage_path}", content=uploaded.content),
+                source_id=f"wiki-source:{metric_id}:file-{uploaded.content_hash[:20]}", content_hash=uploaded.content_hash,
+                file_metadata={"original_filename": uploaded.filename, "media_type": uploaded.media_type, "storage_path": uploaded.storage_path, "byte_size": uploaded.byte_size, "parser_name": uploaded.parser_name, "warnings": uploaded.warnings},
+            )
+            con.commit()
+            return result
+        finally:
+            con.close()
+    except Exception:
+        remove_uploaded_metric_source(uploaded.storage_path)
+        raise
 
 def _catalog_snapshot(row) -> tuple[str, WikiSourceInput]:
     item = dict(row)
