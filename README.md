@@ -1,6 +1,39 @@
-# Data Agent（本地开发版）
+# Governed Data Agent
 
-面向数据目录检索、自然语言取数和结果分析的 LangGraph Agent。当前支持本地 SQLite 演示库和 PostgreSQL 元数据连接器，并为更多云上数据源、自建集群和外部知识文件保留扩展接口。
+面向数据目录检索、指标口径治理、自然语言取数和结果分析的企业级 Data Agent。项目以 LangGraph 编排对话与数据任务，支持 PostgreSQL/SQLite、混合 RAG、Text-to-Metrics/Text-to-SQL 双路由、权限控制、Human-in-the-loop 和可视化结果。
+
+> A governance-first Data Agent: resolve the business definition, validate permissions and schema, then generate and execute read-only SQL.
+
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)
+![LangGraph](https://img.shields.io/badge/LangGraph-Agent-1C3C3C)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+## 项目亮点
+
+- **指标优先**：先绑定 `metric_id + version` 和已认证执行契约，再生成 SQL；缺失、歧义、无权限或失效口径不会静默降级。
+- **安全查询**：SQLGlot 解析、只读白名单、字段权限、超时与行数限制，并要求 SQL 表唯一映射到同一已授权数据源。
+- **混合 RAG**：Milvus/BGE 稠密召回 + 中文 BM25 + RRF + reranker，支持目录元数据、知识文档、关系边和边界安全的精确标识符。
+- **可扩展 Agent**：统一管理工具、MCP Server、Skills、知识库和模型供应商；高风险 SQL 写入及 ETL 支持人工审批。
+- **完整产品界面**：会话、数据目录、指标中心、血缘、数据源、智能体与模型管理、附件和图表可视化。
+- **可验证**：提供隔离测试、PostgreSQL 黄金查询、真实模型正确率、稳定性和 RAG 召回率评测脚本。
+
+## 已验证基线
+
+以下结果使用合成 PostgreSQL 数仓；模型验收关闭 Agent 与工具缓存并连续运行三轮：
+
+| 验收面 | 结果 |
+| --- | ---: |
+| 后端隔离测试 | 443 passed |
+| 前端测试 | 12/12 passed |
+| PostgreSQL 确定性黄金查询 | 三轮累计 90/90 |
+| 完整 LangGraph + 模型业务题 | 三轮累计 30/30 |
+| 同义改写、追问、歧义、权限稳定性 | 三轮累计 36/36 |
+| RAG Recall@5 / Recall@12 | 97.44% / 100% |
+| RAG P50 / P95 | 41.71 ms / 71.88 ms |
+
+详细测量口径见 [`docs/first-token-optimization-notes.md`](docs/first-token-optimization-notes.md)。固定评测集结果不等同于生产 SLA，生产环境仍应使用自身数据和问题集验收。
 
 ## 启动
 
@@ -97,14 +130,39 @@ npm run api
 
 ## 核心架构
 
+```mermaid
+flowchart LR
+    U[用户问题] --> R[上下文感知路由]
+    R --> M[Text-to-Metrics]
+    R --> Q[Text-to-SQL]
+    R --> A[结果分析 / 可视化]
+    R --> X[工具 / MCP / Skill]
+    M --> W[指标 Wiki 与执行契约]
+    Q --> G[目录 + 知识库混合 RAG]
+    W --> V[Schema / 权限 / Source 校验]
+    G --> V
+    V --> S[只读 SQL 执行器]
+    S --> A
+    X --> H{高风险操作?}
+    H -->|是| P[Human-in-the-loop]
+    H -->|否| O[执行]
+```
+
 | 能力 | 当前实现 |
 | --- | --- |
 | Agent 编排 | Python + FastAPI + LangGraph，路由到 General、Data Query、Data Analysis、ETL 节点 |
 | 数据目录 | 本地元数据文件、PostgreSQL 自动采集与远端连接器扩展接口 |
-| 只读查询 | 当前 SQLite 执行器只允许目录白名单内的 SELECT/CTE；PostgreSQL 查询执行器是下一阶段 |
+| 只读查询 | SQLite 与 PostgreSQL 执行器仅允许目录白名单内的 SELECT/CTE，并执行权限、函数、字段、超时和行数限制 |
 | RAG 知识库 | 多格式结构解析 + SQLite 元数据 + Milvus BGE 向量 + 中文 BM25 + RRF + reranker |
 | 上下文管理 | SQLite 会话、最近消息窗口、长会话摘要、显式跨会话长期记忆 |
 | 模型接入 | 可配置供应商、模型与智能体绑定，响应由 Pydantic 校验 |
+
+## 安全边界
+
+- `.env`、`.data`、模型密钥、数据库密码和 SSH 私钥不会提交到 Git。
+- 数据源使用专门的只读账号；写入 SQL 和 ETL 必须经过权限校验及人工审批。
+- RAG 召回结果只是候选证据，执行前仍会校验指标版本、Schema、Source、字段权限和 SQL 安全性。
+- 示例配置和测试仓库只包含合成数据，不应直接作为生产部署配置。
 
 交互式 API 文档位于 `http://127.0.0.1:18001/docs`。
 
