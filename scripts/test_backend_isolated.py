@@ -14,6 +14,7 @@ def main():
     from cryptography.fernet import Fernet
 
     # Override paths before importing app/test modules (some legacy tests use db()).
+    core.DATA_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="backend-tests-", dir=core.DATA_DIR) as directory:
         root = Path(directory)
         core.DATA_DIR = root
