@@ -27,18 +27,11 @@ def test_comparison_preserves_duplicates_nulls_and_float_tolerance():
     assert not rows_equal([{"x": 1}, {"x": 1}], [[1], [2]])
 
 
-def test_metric_reference_is_required_and_changes_invalidate_plan(isolated):
-    metrics = evidence.metric_context("GMV", [], "eval-analyst")
-    assert metrics and metrics[0]["required"]
-    plan = {"sql": "SELECT SUM(amount) FROM orders WHERE status='PAID'"}
-    assert evidence.check_metric_references(plan, metrics, "eval-analyst")
-    plan["metric_refs"] = [{"id": metrics[0]["id"], "version": metrics[0]["version"]}]
-    assert evidence.check_metric_references(plan, metrics, "eval-analyst") is None
-    con = isolated()
-    con.execute("UPDATE catalog_metrics SET formula='new definition' WHERE id='metric-gmv'")
-    con.commit()
-    con.close()
-    assert evidence.check_metric_references(plan, metrics, "eval-analyst")
+def test_unexecutable_metric_is_kept_out_of_ad_hoc_planning(isolated):
+    # Explicit governed metrics are resolved by metric_router before the
+    # ad-hoc planner. A definition without an active execution contract must
+    # not be advertised to Text-to-SQL.
+    assert evidence.metric_context("GMV", [], "eval-analyst") == []
 
 
 def test_metric_reference_cannot_cite_inaccessible_definition(isolated):
@@ -67,7 +60,7 @@ def test_shipped_examples_are_verified_and_version_scoped(isolated):
     assert examples.retrieve_examples("已支付订单", "eval-analyst") == []
 
 
-def test_query_planner_receives_business_contract_and_examples(isolated, monkeypatch):
+def test_query_planner_excludes_unexecutable_metric_contract(isolated, monkeypatch):
     from backend import agent
     captured = []
     async def complete(_agent, messages, schema, _model):
@@ -77,7 +70,7 @@ def test_query_planner_receives_business_contract_and_examples(isolated, monkeyp
     state = {"message": "GMV", "history": [], "user_id": "eval-analyst", "rag": []}
     result = asyncio.run(agent.data_query_agent(state))
     assert "Business contract" in captured[0]["content"]
-    assert "metric-gmv" in captured[0]["content"]
+    assert "metric-gmv" not in captured[0]["content"]
     assert result["final"]["answer"] == "请确认统计时间"
 
 
@@ -86,8 +79,14 @@ def test_invalid_metric_stops_before_sql_executor(isolated, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("SQL must not execute")
     monkeypatch.setattr(agent.tool_executor, "invoke", forbidden)
-    metrics = evidence.metric_context("GMV", [], "eval-analyst")
-    state = {"plan": {"sql": "SELECT SUM(amount) FROM orders"}, "user_id": "eval-analyst", "query_metrics": metrics}
+    state = {
+        "plan": {
+            "sql": "SELECT SUM(amount) FROM orders",
+            "metric_refs": [{"id": "catalog:metric:metric-gmv", "version": "0" * 64}],
+        },
+        "user_id": "eval-analyst",
+        "query_metrics": [],
+    }
     result = agent.query_tool(state)
     assert agent.route_after_query(result) == "query_failed"
 

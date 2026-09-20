@@ -43,7 +43,10 @@ def test_both_entry_points_execute_same_nodes_and_business_outcome(monkeypatch, 
     def invoke(tool_id, payload, context):
         if tool_id == "catalog_schema":
             return ToolResult(status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
-                              data={"tables": [{"asset_id": "orders", "name": "orders", "columns": []}]})
+                              data={"tables": [{
+                                  "asset_id": "orders", "name": "orders", "namespace": "",
+                                  "source_id": "source-a", "columns": [],
+                              }]})
         calls.append("query")
         attempts.append(1)
         if scenario == "failed" or (scenario == "repair" and len(attempts) == 1):

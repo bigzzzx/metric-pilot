@@ -26,11 +26,18 @@ from backend.tools.models import ToolExecutionContext, ToolStatus
 from backend.tools.sql_write_tool import prepare_sql_write, writable_schema_summary
 from backend.mcp.runtime import is_tool_bound, tool_catalog_for_router
 from backend.skills.repository import bound_skill_summaries, selected_skill_context
-from backend.query_quality.evidence import metric_context, check_metric_references, planning_instructions, retrieval_question
+from backend.query_quality.evidence import (
+    metric_context, check_metric_references, executable_planning_rag,
+    planning_instructions, retrieval_question,
+)
 from backend.semantic_metrics.nodes import metric_router, metric_plan, route_after_metric_router, current_contract_issue
+from backend.semantic_metrics.resolver import resolve_metric_references
 from backend.query_quality.examples import retrieve_examples
-from backend.query_quality.planner_context import candidate_tables, schema_instructions, compact_rag
+from backend.query_quality.planner_context import (
+    candidate_tables, schema_instructions, compact_rag, sql_referenced_rag_tables,
+)
 from backend.query_quality.sql_normalization import canonicalize_documented_enums
+from backend.query_quality.source_resolution import resolve_source_id
 from backend.query_fast_path import is_unambiguous_technical_query
 from backend.catalog.quality_context import append_quality_notice, quality_context_for_schemas, quality_prompt_context
 from backend.agent_cache import cache_ttl, configured_agent_cache
@@ -454,12 +461,15 @@ async def data_query_agent(state: AgentOverallState) -> AgentOverallState:
             schemas["unavailable"] = list(dict.fromkeys([
                 *schemas["unavailable"], outcome.error.message if outcome.error else "表结构查询失败"
             ]))
-    await inspect_tables(candidate_tables(state.get("rag", []), question))
+    planning_rag = await asyncio.to_thread(
+        executable_planning_rag, state.get("rag", []), state.get("user_id", ""),
+    )
+    await inspect_tables(candidate_tables(planning_rag, question))
     quality_context = await asyncio.to_thread(
         quality_context_for_schemas, state.get("user_id", ""), schemas,
     )
-    evidence = prompt_context(state["message"], compact_rag(state.get("rag", []), schemas))
-    metrics = await asyncio.to_thread(metric_context, question, state.get("rag", []), state.get("user_id", ""))
+    evidence = prompt_context(state["message"], compact_rag(planning_rag, schemas))
+    metrics = await asyncio.to_thread(metric_context, question, planning_rag, state.get("user_id", ""))
     examples = await asyncio.to_thread(retrieve_examples, question, state.get("user_id", ""))
     base_prompt = '''You are the Data Query Agent. Use only the supplied RAG evidence. Answer metadata questions directly;
 generate SQL only if data must be queried. Use the SQL dialect of the verified source (SQLite or PostgreSQL).
@@ -478,7 +488,7 @@ Return JSON only:
         "contract": "query-plan-v2-visualization",
         "visualization_request": state.get("visualization_request"),
         "context": _cache_conversation_context(state),
-        "rag": compact_rag(state.get("rag", []), schemas),
+        "rag": compact_rag(planning_rag, schemas),
         "schemas": schemas,
         "metrics": metrics,
         "examples": examples,
@@ -505,31 +515,63 @@ Return JSON only:
         followup += "\nUpdated verified quality context:\n" + quality_prompt_context(quality_context)
         followup += "\nNo further lookup is allowed this turn. Return schema_request=[] with a verified SQL or a clarification."
         plan = await complete_structured("data-query-agent", messages(state, followup), QueryPlanOutput, state.get("model_id"))
+    planner_source_id = plan.source_id
+    # A planner citation is an explicit governed-metric claim. Validate every
+    # citation before considering the model SQL or its source, then discard the
+    # model SQL and compile the one valid contract.
+    if plan.sql and plan.metric_refs:
+        resolution = resolve_metric_references(plan.metric_refs, state.get('user_id', ''))
+        if resolution.status != 'matched':
+            plan_data = plan.model_dump()
+            result = {
+                **state,
+                'query_mode': 'text_to_metrics',
+                'metric_resolution': resolution.model_dump(mode='json'),
+                'final': {'answer': resolution.message},
+                'plan': {'sql': None, 'metric_refs': plan_data.get('metric_refs', [])},
+                'planner_source_id': planner_source_id,
+                'source_resolution_reason': 'metric_reference_rejected',
+            }
+            if resolution.status == 'denied':
+                result['permission_error'] = {'code': 'permission_denied', 'message': resolution.message}
+            return result
+        bound = {
+            **state,
+            'query_mode': 'text_to_metrics',
+            'metric_resolution': resolution.model_dump(mode='json'),
+            'planner_source_id': planner_source_id,
+            'source_resolution_reason': 'metric_reference_validated',
+        }
+        return await metric_plan(bound)
+    if plan.sql:
+        # The first bounded lookup optimizes recall, but the model may choose a
+        # lower-ranked authorized table. Fetch only exact table assets already
+        # present in RAG, then run the same strict parsed-SQL source binding.
+        verified_assets = {str(item.get("asset_id") or "") for item in schemas["tables"]}
+        supplemental = [
+            asset_id for asset_id in sql_referenced_rag_tables(plan.sql, planning_rag)
+            if asset_id not in verified_assets
+        ]
+        if supplemental:
+            await inspect_tables(supplemental[:3])
     if plan.schema_request or (plan.sql and not schemas["tables"]):
         plan = QueryPlanOutput(answer="尚未核实所需的授权表结构。请确认数据表及字段，或检查 catalog_schema 工具绑定。", sql=None)
+        planner_source_id = plan.source_id
+    source_resolution_reason = "not_applicable"
     if plan.sql:
         plan.sql = canonicalize_documented_enums(plan.sql, schemas)
-        verified_sources = {table.get('source_id') for table in schemas['tables'] if table.get('source_id')}
-        if not plan.source_id and len(verified_sources) == 1:
-            plan.source_id = next(iter(verified_sources))
-        elif verified_sources and plan.source_id not in verified_sources:
-            plan = QueryPlanOutput(answer="请明确要查询的数据源；本次只能查询同一数据源内已核实的表。", sql=None)
+        source_resolution = resolve_source_id(plan.sql, planner_source_id, schemas)
+        source_resolution_reason = source_resolution.reason
+        if source_resolution.valid:
+            plan.source_id = source_resolution.source_id
+        else:
+            plan = QueryPlanOutput(
+                answer="SQL 中的表未能从已核实结构唯一映射到同一数据源，请明确数据源和 Schema。",
+                sql=None,
+            )
     if agent_cache and not plan_cache_hit and not used_schema_request and not plan.schema_request:
         agent_cache.set("query-plan", plan_identity, plan.model_dump(mode="json"), PLAN_CACHE_TTL_SECONDS)
     plan_data = plan.model_dump()
-    # A semantic RAG/Wiki match can discover a governed metric without an exact
-    # alias. Once the planner cites that identity, compile its contract rather
-    # than executing the model's proposed SQL.
-    if plan.sql and plan.metric_refs:
-        from backend.semantic_metrics.repository import metric_records
-        from backend.semantic_metrics.models import MetricResolution
-        referenced={ref['id'] if isinstance(ref,dict) else ref.id for ref in plan.metric_refs}
-        governed=[m for m in metric_records(state.get('user_id','')) if m.document_id in referenced and m.contract]
-        if governed:
-            if len(governed)!=1 or not governed[0].can_query or governed[0].certification_status!='certified' or governed[0].contract.status!='active':
-                return {**state,'final':{'answer':'请先确认一个可查询的已认证指标口径。'},'plan':{'sql':None}}
-            bound={**state,'query_mode':'text_to_metrics','metric_resolution':MetricResolution(status='matched',metrics=governed).model_dump(mode='json')}
-            return await metric_plan(bound)
     if not plan.sql:
         plan_data["answer"] = append_quality_notice(plan_data.get("answer", ""), quality_context.get("notice"))
     _log_node_duration("data_query", started_at, has_sql=bool(plan.sql), quality_risks=len(quality_context["risks"]),
@@ -537,6 +579,8 @@ Return JSON only:
     return {**state, "query_metrics": metrics, "verified_schemas": schemas,
             "quality_risks": quality_context["risks"], "quality_notice": quality_context["notice"], "plan": plan_data,
             "plan_cache_hit": plan_cache_hit,
+            "planner_source_id": planner_source_id,
+            "source_resolution_reason": source_resolution_reason,
             **({"final": plan_data} if not plan.sql else {})}
 
 
@@ -549,6 +593,18 @@ def query_tool(state: AgentOverallState) -> AgentOverallState:
     issue = current_contract_issue(state) or check_metric_references(state["plan"], state.get("query_metrics", []), state.get("user_id", ""))
     if issue:
         return {**state, "sql": sql, "query_error": issue, "query_terminal": True}
+    if state.get("verified_schemas"):
+        source_resolution = resolve_source_id(
+            sql, state["plan"].get("source_id"), state.get("verified_schemas"),
+        )
+        if not source_resolution.valid or source_resolution.source_id != state["plan"].get("source_id"):
+            return {
+                **state,
+                "sql": sql,
+                "query_error": "执行前数据源校验失败；SQL 表必须唯一映射到同一已授权数据源。",
+                "query_terminal": True,
+                "source_resolution_reason": "execution_revalidation_failed:" + source_resolution.reason,
+            }
     outcome = tool_executor.invoke(
         "readonly_sql", {"sql": sql, "source_id": state["plan"].get("source_id")},
         _tool_context(state, "readonly_sql", "data-query-agent"),
@@ -586,6 +642,13 @@ async def execute_mcp_tool(state: AgentOverallState) -> AgentOverallState:
         }
     if result.error:
         error = result.error.model_dump(mode="json")
+        if state.get("route") == "data_query" and error["code"] in {"tool_not_found", "tool_unavailable"}:
+            return {
+                **state,
+                "mcp_tool_call": None,
+                "mcp_fallback": True,
+                "tool_result": serialized,
+            }
         return {
             **state, "tool_result": serialized, "final": {"answer": error["message"]},
             **({"permission_error": error} if error["code"] in {"permission_denied", "agent_tool_denied"} else {}),
@@ -597,6 +660,10 @@ async def execute_mcp_tool(state: AgentOverallState) -> AgentOverallState:
     )
     final = await complete_structured(agent_id, messages(state, prompt), AnswerOutput, state.get("model_id"))
     return {**state, "mcp_tool_result": result.data, "tool_result": serialized, "final": final.model_dump()}
+
+
+def route_after_mcp_tool(state: AgentOverallState) -> str:
+    return "metric_router" if state.get("mcp_fallback") else "finish"
 
 
 def route_after_query(state: AgentOverallState) -> str:

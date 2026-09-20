@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 from backend.evaluation.environment import evaluation_environment
-from backend.semantic_metrics import nodes, wiki
+from backend.semantic_metrics import nodes, source_files, wiki
 from backend.semantic_metrics.resolver import resolve_metric_query
 from backend.semantic_metrics.compiler import compile_metric_query, fast_request, MetricRequest
 from backend.catalog.rag_documents import authorized_catalog_documents
@@ -26,7 +26,7 @@ def state(message):
 @pytest.mark.parametrize('question,status',[
     ('2026年8月演示已支付金额','matched'),('2026年8月演示销售额','ambiguous'),
     ('查询 orders 有几行','unmatched'),('GMV','unsupported'),
-    ('原始字段演示销售额','unmatched'),('2026年8月演示下单金额和演示已支付金额','ambiguous'),
+    ('原始字段演示销售额','ambiguous'),('2026年8月演示下单金额和演示已支付金额','ambiguous'),
 ])
 def test_resolution(question,status,isolated):
     assert resolve_metric_query(question,'eval-analyst').status==status
@@ -153,6 +153,26 @@ def test_wiki_sources_are_content_addressed_and_immutable(isolated):
     con.close()
 
 
+def test_uploaded_metric_source_keeps_raw_file_and_deduplicates(isolated, monkeypatch, tmp_path):
+    con = isolated()
+    con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')")
+    con.commit()
+    con.close()
+    root = tmp_path / 'metric-sources'
+    monkeypatch.setattr(source_files, 'METRIC_SOURCE_ROOT', root)
+    raw = '正式口径：只统计 PAID 状态订单金额。'.encode('utf-8')
+    first = wiki.upload_source_file('metric-demo-paid', 'eval-analyst', 'GMV口径.txt', 'text/plain', raw)
+    second = wiki.upload_source_file('metric-demo-paid', 'eval-analyst', 'GMV口径.txt', 'text/plain', raw)
+    assert first['id'] == second['id']
+    assert first['source_type'] == 'uploaded_document'
+    assert first['original_filename'] == 'GMV口径.txt'
+    assert first['parser_name'] == 'text'
+    assert first['byte_size'] == len(raw)
+    assert (root.parent / first['storage_path']).read_bytes() == raw
+    con = isolated()
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute('DELETE FROM metric_wiki_sources WHERE id=?', (first['id'],))
+    con.close()
 def test_wiki_generation_repairs_non_verbatim_model_evidence(isolated,monkeypatch):
     con=isolated();con.execute("INSERT INTO catalog_user_roles(role_id,user_id) VALUES ('role-platform-admin','eval-analyst')");con.commit();con.close()
     calls=[]

@@ -1,6 +1,8 @@
 """Assemble bounded verified schema context without another LLM routing pass."""
 import json
 
+from backend.data_sources.query_catalog import QueryTargetError
+from backend.data_sources.sql_validation import parse_query
 from backend.hybrid_retrieval import tokenize
 
 
@@ -70,3 +72,43 @@ def compact_rag(rag, schemas):
     verified = {item["asset_id"] for item in schemas.get("tables", [])}
     return [item for item in rag if not (item.get("kind") in {"table", "column"}
             and item.get("asset_ids") and set(item["asset_ids"]).issubset(verified))]
+
+
+def sql_referenced_rag_tables(sql, rag):
+    """Return exact authorized RAG table assets referenced by parsed SQL.
+
+    A model cannot use this to discover a new table: only table documents
+    already present in the permission-scoped retrieval result are eligible.
+    Ambiguous identities are deliberately left unresolved for the normal
+    source validator to reject.
+    """
+    try:
+        _, parsed_tables = parse_query(sql)
+    except QueryTargetError:
+        return []
+    selected = []
+    for table in parsed_tables:
+        name = str(table.name or "").casefold()
+        namespace = str(table.db or "").casefold()
+        matches = [
+            item for item in rag
+            if item.get("kind") == "table"
+            and str(item.get("physical_name") or item.get("name") or "").casefold() == name
+            and (not namespace or str(item.get("namespace") or "").casefold() == namespace)
+            and len(item.get("asset_ids") or []) == 1
+        ]
+        identities = {
+            (
+                str(item.get("source_id") or ""),
+                str(item.get("namespace") or "").casefold(),
+                str(item.get("physical_name") or item.get("name") or "").casefold(),
+                str(item["asset_ids"][0]),
+            )
+            for item in matches
+        }
+        if len(identities) != 1:
+            continue
+        asset_id = next(iter(identities))[3]
+        if asset_id not in selected:
+            selected.append(asset_id)
+    return selected

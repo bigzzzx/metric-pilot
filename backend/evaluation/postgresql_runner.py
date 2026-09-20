@@ -12,6 +12,7 @@ import tempfile
 import time
 from typing import Any
 from unittest.mock import patch
+import uuid
 
 from fastapi import HTTPException
 
@@ -312,6 +313,10 @@ def model_diagnostics(state: dict) -> dict[str, Any]:
     return {
         "route": state.get("route"),
         "route_source": state.get("route_source"),
+        "query_mode": state.get("query_mode"),
+        "metric_resolution": state.get("metric_resolution"),
+        "planner_source_id": state.get("planner_source_id"),
+        "source_resolution_reason": state.get("source_resolution_reason"),
         "contextual_follow_up": bool(state.get("contextual_follow_up")),
         "retrieved_assets": _rag_trace(state.get("rag") or []),
         "verified_tables": _verified_table_trace(state.get("verified_schemas")),
@@ -335,7 +340,7 @@ async def _run_model_case(case: PostgreSQLCase, user_id: str, source_id: str) ->
         item["content"] = item.get("content", "").replace(
             "b882d48b-8a6e-4ae4-8bfa-a7baeaf05c0d", source_id)
     question = f"使用 PostgreSQL 测试数仓回答。{case.question}"
-    conversation_id = f"postgres-eval-{case.id}"
+    conversation_id = f"postgres-eval-{case.id}-{uuid.uuid4().hex}"
     try:
         # The production router inspects conversation-scoped attachments before
         # choosing a route. Acceptance runs must therefore use the same valid
@@ -356,31 +361,55 @@ async def _run_model_case(case: PostgreSQLCase, user_id: str, source_id: str) ->
             raise ValueError("Agent did not produce terminal state")
         rows = state.get("result") or []
         passed = bool(state.get("sql")) and model_rows_equal(case, rows)
-        return {"id": case.id, "category": case.category,
+        return {"id": case.id, "category": case.category, "conversation_id": conversation_id,
                 "status": "passed" if passed else "failed", "first_token_ms": first_token_ms,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                 "sql": state.get("sql"), "actual": None if passed else rows,
                 "answer": state.get("final", {}).get("answer", ""), "nodes": nodes,
                 "diagnostics": model_diagnostics(state)}
     except Exception as exc:
-        return {"id": case.id, "category": case.category, "status": "error",
+        return {"id": case.id, "category": case.category, "conversation_id": conversation_id, "status": "error",
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                 "first_token_ms": first_token_ms, "error_type": type(exc).__name__, "nodes": nodes}
 
 
-async def run_model_acceptance(source_id: str | None = None) -> dict[str, Any]:
+def _configured_model_diagnostics() -> dict[str, Any]:
+    from backend.model_client import _configured_model
+    from backend.provider_transport import connection_label
+    row = _configured_model("data-query-agent", None)
+    return {
+        "provider": row["provider_name"],
+        "provider_kind": row["kind"],
+        "model": row["model_id"],
+        "connection": connection_label(row),
+    }
+
+
+async def run_model_acceptance(source_id: str | None = None, *, no_cache: bool = False) -> dict[str, Any]:
+    from backend import agent
     source = _configured_source(source_id)
     user_id = _platform_admin()
     selected = [case for case in CASES if case.id in MODEL_CASE_IDS]
     results = []
-    for case in selected:
-        result = await _run_model_case(case, user_id, source["id"])
-        results.append(result)
-        print(f"model {case.id}: {result['status']}", flush=True)
+    configured_cache = agent.agent_cache
+    configured_tool_cache = agent.tool_executor.cache
+    if no_cache:
+        agent.agent_cache = None
+        agent.tool_executor.cache = None
+    try:
+        for case in selected:
+            result = await _run_model_case(case, user_id, source["id"])
+            results.append(result)
+            print(f"model {case.id}: {result['status']}", flush=True)
+    finally:
+        agent.agent_cache = configured_cache
+        agent.tool_executor.cache = configured_tool_cache
     summary = _summary(results)
     first_tokens = [item["first_token_ms"] for item in results if item.get("first_token_ms") is not None]
     return {"suite_version": "postgresql-2026-09-10.1", "mode": "full_langgraph_llm",
-            "source_id": source["id"], "source_name": source["name"], **summary,
+            "source_id": source["id"], "source_name": source["name"],
+            "cache_mode": "disabled" if no_cache else "configured",
+            "model_runtime": _configured_model_diagnostics(), **summary,
             "median_first_token_ms": round(statistics.median(first_tokens), 2) if first_tokens else None,
             "results": results}
 
@@ -408,7 +437,7 @@ async def _run_stability_case(case: PostgreSQLStabilityCase, user_id: str, sourc
     first_token_ms = None
     nodes = []
     state = None
-    conversation_id = f"postgres-stability-{case.id}"
+    conversation_id = f"postgres-stability-{case.id}-{uuid.uuid4().hex}"
     try:
         create_conversation(user_id, conversation_id)
         async with asyncio.timeout(120):
@@ -428,6 +457,7 @@ async def _run_stability_case(case: PostgreSQLStabilityCase, user_id: str, sourc
         passed, check = _stability_passed(case, state)
         return {
             "id": case.id, "category": case.category, "expectation": case.expectation,
+            "conversation_id": conversation_id,
             "status": "passed" if passed else "failed", "check": check,
             "first_token_ms": first_token_ms,
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -438,24 +468,37 @@ async def _run_stability_case(case: PostgreSQLStabilityCase, user_id: str, sourc
     except Exception as exc:
         return {
             "id": case.id, "category": case.category, "expectation": case.expectation,
+            "conversation_id": conversation_id,
             "status": "error", "duration_ms": round((time.perf_counter() - started) * 1000, 2),
             "first_token_ms": first_token_ms, "error_type": type(exc).__name__, "nodes": nodes,
         }
 
 
-async def run_stability_acceptance(source_id: str | None = None) -> dict[str, Any]:
+async def run_stability_acceptance(source_id: str | None = None, *, no_cache: bool = False) -> dict[str, Any]:
+    from backend import agent
     source = _configured_source(source_id)
     actors = {"admin": _platform_admin(), "ecommerce": _platform_ecommerce_user()}
     results = []
-    for case in STABILITY_CASES:
-        result = await _run_stability_case(case, actors[case.actor], source["id"])
-        results.append(result)
-        print(f"stability {case.id}: {result['status']}", flush=True)
+    configured_cache = agent.agent_cache
+    configured_tool_cache = agent.tool_executor.cache
+    if no_cache:
+        agent.agent_cache = None
+        agent.tool_executor.cache = None
+    try:
+        for case in STABILITY_CASES:
+            result = await _run_stability_case(case, actors[case.actor], source["id"])
+            results.append(result)
+            print(f"stability {case.id}: {result['status']}", flush=True)
+    finally:
+        agent.agent_cache = configured_cache
+        agent.tool_executor.cache = configured_tool_cache
     summary = _summary(results)
     first_tokens = [item["first_token_ms"] for item in results if item.get("first_token_ms") is not None]
     return {
         "suite_version": "postgresql-stability-2026-09-10.1", "mode": "stability_langgraph_llm",
-        "source_id": source["id"], "source_name": source["name"], **summary,
+        "source_id": source["id"], "source_name": source["name"],
+        "cache_mode": "disabled" if no_cache else "configured",
+        "model_runtime": _configured_model_diagnostics(), **summary,
         "median_first_token_ms": round(statistics.median(first_tokens), 2) if first_tokens else None,
         "results": results,
     }

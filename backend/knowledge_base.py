@@ -4,7 +4,12 @@ import re
 import uuid
 
 from backend.core import db
-from backend.hybrid_retrieval import bm25_rank, reciprocal_rank_fusion, rerank_or_fallback
+from backend.hybrid_retrieval import (
+    bm25_rank,
+    exact_identifier_rank,
+    reciprocal_rank_fusion,
+    rerank_or_fallback,
+)
 from backend.knowledge.repository import init_knowledge_schema
 from backend.observability import log_event
 from backend.retrieval_models import RetrievalModelError, embed_text, embed_texts
@@ -241,6 +246,16 @@ def retrieve(query: str, limit: int = 5, user_id: str | None = None, *, apply_re
         return []
     init_knowledge_schema()
     candidate_limit = max(limit * 3, 10)
+    authorized = _authorized_chunks(user_id)
+    lexical = bm25_rank(query, authorized, candidate_limit)
+    exact = exact_identifier_rank(query, authorized, candidate_limit)
+    # Exact identifiers such as AT-42 are authoritative local lexical hits.
+    # Avoid a second remote query embedding when the caller already supplied a
+    # boundary-safe identifier present in an authorized chunk.
+    if exact:
+        fused = reciprocal_rank_fusion(exact, lexical)
+        candidates = fused[:candidate_limit]
+        return rerank_or_fallback(query, candidates, limit) if apply_rerank else candidates[:limit]
     try:
         if using_milvus():
             dense = _milvus_retrieve(query, candidate_limit, user_id)
@@ -249,7 +264,6 @@ def retrieve(query: str, limit: int = 5, user_id: str | None = None, *, apply_re
     except (RetrievalModelError, VectorStoreError) as exc:
         log_event("rag.dense_fallback", error=str(exc))
         dense = []
-    lexical = bm25_rank(query, _authorized_chunks(user_id), candidate_limit)
-    fused = reciprocal_rank_fusion(dense, lexical)
-    candidates = fused[:min(candidate_limit, 10)]
+    fused = reciprocal_rank_fusion(exact, dense, lexical)
+    candidates = fused[:candidate_limit]
     return rerank_or_fallback(query, candidates, limit) if apply_rerank else candidates[:limit]

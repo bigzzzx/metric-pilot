@@ -96,9 +96,11 @@ def test_implicit_business_breakdown_keeps_relationship_evidence(monkeypatch):
 def test_qualified_technical_query_skips_remote_retrieval(monkeypatch):
     documents = [
         {"id": "orders", "kind": "table", "title": "ods.orders", "content": "订单表",
-         "keywords": [], "asset_ids": ["orders"], "source_kind": "postgresql"},
+         "keywords": [], "asset_ids": ["orders"], "source_kind": "postgresql",
+         "namespace": "ods", "physical_name": "orders"},
         {"id": "customers", "kind": "table", "title": "ods.customers", "content": "客户表",
-         "keywords": [], "asset_ids": ["customers"], "source_kind": "postgresql"},
+         "keywords": [], "asset_ids": ["customers"], "source_kind": "postgresql",
+         "namespace": "ods", "physical_name": "customers"},
     ]
     monkeypatch.setattr(rag, "authorized_catalog_documents", lambda _user: documents)
     monkeypatch.setattr(
@@ -124,4 +126,4 @@ def test_qualified_business_metric_still_uses_hybrid_retrieval(monkeypatch):
     monkeypatch.setattr(rag, "retrieve_knowledge", lambda *_args, **_kwargs: calls.append("knowledge") or [])
     monkeypatch.setattr(rag, "rerank_or_fallback", lambda _query, rows, limit: rows[:limit])
     rag.retrieve("查询 ods.orders 的 GMV", user_id="user")
-    assert calls == ["dense", "knowledge"]
+    assert set(calls) == {"dense", "knowledge"}

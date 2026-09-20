@@ -13,7 +13,7 @@ from backend.retrieval_models import RetrievalModelError, rerank
 def tokenize(text: str) -> list[str]:
     """Tokenize Chinese/English text, preferring jieba search-mode tokens."""
     lowered = text.lower()
-    words = re.findall(r"[a-z0-9_]+", lowered)
+    words = re.findall(r"[a-z0-9_]+(?:-[a-z0-9_]+)*", lowered)
     chinese = " ".join(re.findall(r"[\u4e00-\u9fff]+", text))
     if chinese:
         try:
@@ -24,6 +24,43 @@ def tokenize(text: str) -> list[str]:
             for phrase in re.findall(r"[\u4e00-\u9fff]+", chinese):
                 words.extend(phrase[index:index + 2] for index in range(max(1, len(phrase) - 1)))
     return words
+
+
+_EXACT_IDENTIFIER = re.compile(
+    r"(?<![a-z0-9_.-])(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)+|[a-z0-9]+(?:[_-][a-z0-9]+)+)(?![a-z0-9_.-])",
+    re.IGNORECASE,
+)
+
+
+def exact_identifier_rank(query: str, documents: Iterable[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Rank boundary-safe exact identifiers, including hyphens and underscores."""
+
+    identifiers = {match.group(0).casefold() for match in _EXACT_IDENTIFIER.finditer(query)}
+    if not identifiers:
+        return []
+    ranked = []
+    for row in documents:
+        structured = [
+            row.get("namespace"), row.get("physical_name"), row.get("source_id"),
+            *list(row.get("keywords") or []),
+        ]
+        haystack = " ".join(
+            str(value) for value in [
+                row.get("title"), row.get("content"), *structured,
+            ] if value
+        ).casefold()
+        matches = sum(
+            bool(re.search(
+                r"(?<![a-z0-9_.-])" + re.escape(identifier) + r"(?![a-z0-9_.-])",
+                haystack,
+                re.IGNORECASE,
+            ))
+            for identifier in identifiers
+        )
+        if matches:
+            ranked.append((matches, {**row, "exact_score": float(matches)}))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [row for _, row in ranked[:limit]]
 
 
 def bm25_rank(query: str, documents: Iterable[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -71,15 +108,29 @@ def reciprocal_rank_fusion(*rankings: list[dict[str, Any]], k: int = 60) -> list
 def rerank_or_fallback(query: str, candidates: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     if not candidates:
         return []
+    # Bound remote cross-encoder cost by both result size and text volume.
+    # This scales above ten for Recall@12 instead of restoring the old fixed
+    # top-10 truncation, while preventing long knowledge chunks from making
+    # every catalog lookup pay an unbounded rerank request.
+    candidate_cap = max(limit, min(limit + 4, limit * 2))
+    bounded = []
+    used_chars = 0
+    char_budget = max(6000, limit * 750)
+    for item in candidates[:candidate_cap]:
+        size = len(str(item.get("content", "")))
+        if bounded and used_chars + size > char_budget:
+            break
+        bounded.append(item)
+        used_chars += size
     try:
-        ranking = rerank(query, [str(item.get("content", "")) for item in candidates])
+        ranking = rerank(query, [str(item.get("content", "")) for item in bounded])
     except RetrievalModelError as exc:
-        log_event("rag.rerank_fallback", error=str(exc), candidates=len(candidates))
-        return candidates[:limit]
+        log_event("rag.rerank_fallback", error=str(exc), candidates=len(bounded))
+        return bounded[:limit]
     if not ranking or all(score == 0 for _, score in ranking):
-        return candidates[:limit]
+        return bounded[:limit]
     return [
-        {**candidates[index], "rerank_score": score, "score": round(score, 6)}
+        {**bounded[index], "rerank_score": score, "score": round(score, 6)}
         for index, score in ranking[:limit]
-        if 0 <= index < len(candidates)
+        if 0 <= index < len(bounded)
     ]

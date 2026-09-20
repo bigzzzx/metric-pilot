@@ -41,6 +41,8 @@ class AgentOutputState(TypedDict, total=False):
     plan_cache_hit: bool
     answer_cache_hit: bool
     route_cache_hit: bool
+    planner_source_id: str | None
+    source_resolution_reason: str
     route: Literal["general", "data_query", "data_analysis", "data_write", "etl", "attachment"]
     route_source: Literal["model", "fast_path"]
     contextual_follow_up: bool
@@ -67,6 +69,7 @@ class AgentOverallState(AgentInputState, AgentOutputState, total=False):
     selected_skill_ids: list[str]
     skill_context: str
     mcp_tool_call: dict
+    mcp_fallback: bool
     mcp_tool_result: dict
     query_metrics: list[dict]
     query_terminal: bool

@@ -4,6 +4,7 @@ import json
 import re
 
 from backend.catalog.rag_documents import authorized_catalog_documents
+from backend.query_fast_path import has_explicit_physical_field_intent
 
 
 def retrieval_question(state: dict) -> str:
@@ -39,14 +40,28 @@ def metric_context(query: str, rag: list[dict], user_id: str) -> list[dict]:
     # A qualified-table request for raw physical columns is intentionally not
     # a semantic-metric request. This keeps governance strict for business
     # questions while allowing engineers to audit or reconcile stored columns.
-    qualified_table = re.search(r"\b[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\b", query, re.IGNORECASE)
-    raw_column_intent = any(marker in query for marker in ("物理列", "原始字段", "表中现有字段"))
-    if qualified_table and raw_column_intent:
+    if has_explicit_physical_field_intent(query):
         return []
-    retrieved_ids = {item.get("id") for item in rag if item.get("kind") == "metric"}
+    # Text-to-SQL planning must not advertise a metric which the strict
+    # reference validator would later reject. Explicit metric requests have
+    # already passed through metric_router; this context is only supporting
+    # evidence for an unmatched/ad-hoc plan.
+    from backend.semantic_metrics.repository import metric_records
+    executable = {
+        item.document_id: item
+        for item in metric_records(user_id)
+        if item.can_query and item.certification_status == "certified"
+        and item.contract and item.contract.status == "active"
+    }
+    retrieved_ids = {
+        item.get("id") for item in rag
+        if item.get("kind") == "metric" and item.get("id") in executable
+    }
     metrics = []
     for item in authorized_catalog_documents(user_id):
         if item.get("kind") != "metric":
+            continue
+        if item.get("id") not in executable:
             continue
         aliases = [str(word) for word in item.get("keywords", []) if str(word) not in {"指标", "口径"}]
         explicit = any(word and word.casefold() in query.casefold() for word in aliases)
@@ -54,6 +69,27 @@ def metric_context(query: str, rag: list[dict], user_id: str) -> list[dict]:
             metrics.append({"id": item["id"], "version": fingerprint(item),
                             "definition": item["content"], "required": explicit})
     return sorted(metrics, key=lambda item: not item["required"])[:5]
+
+
+def executable_planning_rag(rag: list[dict], user_id: str) -> list[dict]:
+    """Remove metric claims which cannot be compiled under current policy."""
+    if not user_id:
+        return [item for item in rag if item.get("kind") not in {"metric", "metric_wiki"}]
+    from backend.semantic_metrics.repository import metric_records
+    executable = {
+        item.id for item in metric_records(user_id)
+        if item.can_query and item.certification_status == "certified"
+        and item.contract and item.contract.status == "active"
+    }
+    allowed_ids = {
+        *(f"catalog:metric:{metric_id}" for metric_id in executable),
+        *(f"catalog:metric-wiki:{metric_id}" for metric_id in executable),
+    }
+    return [
+        item for item in rag
+        if item.get("kind") not in {"metric", "metric_wiki"}
+        or str(item.get("id")) in allowed_ids
+    ]
 
 
 def check_metric_references(plan: dict, metrics: list[dict], user_id: str) -> str | None:

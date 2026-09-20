@@ -21,7 +21,8 @@ def _json(value: str | None, fallback: Any) -> Any:
 def _document(*, identifier: str, kind: str, title: str, content: str,
               keywords: list[str], asset_ids: list[str] | None = None,
               domain_id: str | None = None, source_id: str | None = None,
-              source_kind: str | None = None) -> dict[str, Any]:
+              source_kind: str | None = None, namespace: str | None = None,
+              physical_name: str | None = None) -> dict[str, Any]:
     return {
         "id": identifier,
         "kind": kind,
@@ -32,6 +33,8 @@ def _document(*, identifier: str, kind: str, title: str, content: str,
         "domain_id": domain_id,
         "source_id": source_id,
         "source_kind": source_kind,
+        "namespace": namespace,
+        "physical_name": physical_name,
     }
 
 
@@ -75,6 +78,7 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                     keywords=[asset["physical_name"], asset["display_name"], column["physical_name"], *column_aliases],
                     asset_ids=[asset_id], domain_id=asset["domain_id"],
                     source_id=asset["source_id"], source_kind=source_kind,
+                    namespace=asset["namespace"], physical_name=column["physical_name"],
                 ))
             documents.append(_document(
                 identifier=f"catalog:asset:{asset_id}", kind="table",
@@ -88,6 +92,7 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                 keywords=[asset["physical_name"], asset["display_name"], *aliases, *([source_name, source_kind, f"{asset['namespace']}.{asset['physical_name']}"] if remote else [])],
                 asset_ids=[asset_id], domain_id=asset["domain_id"],
                 source_id=asset["source_id"], source_kind=source_kind,
+                namespace=asset["namespace"], physical_name=asset["physical_name"],
             ))
 
         for relation in con.execute("SELECT * FROM catalog_relationships WHERE status='published' ORDER BY id"):

@@ -73,6 +73,8 @@ async def metric_plan(state):
     return {**state,'plan':plan,'rag':rag,'query_metrics':[metric_evidence],'verified_schemas':schemas,
             'quality_risks':quality['risks'],'quality_notice':quality['notice'],
             'metric_parameter_model_used':parameter_model_used,
+            'planner_source_id':state.get('planner_source_id'),
+            'source_resolution_reason':'metric_contract_verified',
             **({'final':plan} if not plan.get('sql') else {})}
 
 
@@ -80,6 +82,8 @@ def current_contract_issue(state):
     if state.get('query_mode')!='text_to_metrics': return None
     expected=MetricResolution.model_validate(state['metric_resolution']).metrics[0]
     current=next((m for m in metric_records(state.get('user_id','')) if m.id==expected.id),None)
-    if not current or not current.can_query or current.version!=expected.version or current.contract!=expected.contract:
+    if (not current or not current.can_query or current.version!=expected.version
+            or current.contract!=expected.contract or current.certification_status!='certified'
+            or not current.contract or current.contract.status!='active'):
         return '指标版本或查询权限已变化，请重新提问。'
     return None

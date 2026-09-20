@@ -3,6 +3,7 @@ import asyncio
 import json
 import statistics
 import time
+import uuid
 
 from fastapi import HTTPException
 
@@ -38,16 +39,19 @@ async def live_case(case):
 
 async def _live_case(case):
     from backend.agent import run_agent_stream
+    from backend.conversations import create_conversation
     from backend.evaluation.environment import SQL_ATTEMPTS
     SQL_ATTEMPTS.clear()
     started = time.perf_counter()
     first = None
     nodes = []
     state = None
+    conversation_id = "eval-" + case.id + "-" + uuid.uuid4().hex
     try:
+        create_conversation("eval-analyst", conversation_id)
         async with asyncio.timeout(90):
             async for event in run_agent_stream(case.question, "data-query-agent", case.history,
-                                                user_id="eval-analyst", conversation_id="eval-" + case.id):
+                                                user_id="eval-analyst", conversation_id=conversation_id):
                 if event["event"] == "delta" and first is None:
                     first = round((time.perf_counter() - started) * 1000, 2)
                 if event["event"] == "node_completed":
@@ -65,32 +69,62 @@ async def _live_case(case):
             passed = not state.get("sql") and any(word in answer for word in ("请", "需要确认", "哪个", "哪种"))
         else:
             passed = bool(answer) and not state.get("sql") and not any(item["node"] == "rag" for item in nodes)
-        return {"id": case.id, "status": "passed" if passed else "failed", "first_response_ms": first,
+        return {"id": case.id, "conversation_id": conversation_id,
+                "status": "passed" if passed else "failed", "first_response_ms": first,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2), "nodes": nodes,
                 "sql": state.get("sql"), "rows": state.get("result"), "answer": answer,
+                "query_mode": state.get("query_mode"),
+                "metric_resolution": state.get("metric_resolution"),
+                "planner_source_id": state.get("planner_source_id"),
+                "source_resolution_reason": state.get("source_resolution_reason"),
                 "sql_attempts": list(SQL_ATTEMPTS), "tool_error": state.get("tool_result", {}).get("error")}
     except Exception as exc:
-        return {"id": case.id, "status": "error", "error_type": type(exc).__name__,
+        return {"id": case.id, "conversation_id": conversation_id,
+                "status": "error", "error_type": type(exc).__name__,
                 "error_code": getattr(exc, "code", None), "http_status": getattr(exc, "status", None),
                 "cause_type": type(exc.__cause__).__name__ if exc.__cause__ else None, "nodes": nodes,
                 "sql_attempts": list(SQL_ATTEMPTS),
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2)}
 
 
-async def evaluate(mode="offline", case_ids=None):
+def _model_runtime() -> dict:
+    from backend.model_client import _configured_model
+    from backend.provider_transport import connection_label
+    row = _configured_model("data-query-agent", None)
+    return {
+        "provider": row["provider_name"],
+        "provider_kind": row["kind"],
+        "model": row["model_id"],
+        "connection": connection_label(row),
+    }
+
+
+async def evaluate(mode="offline", case_ids=None, *, no_cache=False):
+    from backend import agent
     unknown = (case_ids or set()) - {case.id for case in CASES}
     if unknown:
         raise ValueError("Unknown evaluation cases: " + ", ".join(sorted(unknown)))
     cases = [case for case in CASES if not case_ids or case.id in case_ids]
     results = []
-    for case in cases:
-        result = await live_case(case) if mode == "live" else offline_case(case)
-        results.append(result)
-        print(json.dumps({"case": case.id, "status": result["status"]}), flush=True)
+    configured_cache = agent.agent_cache
+    configured_tool_cache = agent.tool_executor.cache
+    if mode == "live" and no_cache:
+        agent.agent_cache = None
+        agent.tool_executor.cache = None
+    try:
+        for case in cases:
+            result = await live_case(case) if mode == "live" else offline_case(case)
+            results.append(result)
+            print(json.dumps({"case": case.id, "status": result["status"]}), flush=True)
+    finally:
+        agent.agent_cache = configured_cache
+        agent.tool_executor.cache = configured_tool_cache
     completed = [item for item in results if item["status"] != "skipped"]
     durations = [item["duration_ms"] for item in completed if "duration_ms" in item]
     return {"suite_version": "2026-09-06.3-fixture-schema-consistency",
             "mode": mode, "retrieval": "permission-scoped fixture BM25 (no production vectors)",
+            "cache_mode": "disabled" if no_cache else "configured",
+            "model_runtime": _model_runtime() if mode == "live" else None,
             "model_accuracy_measured": mode == "live", "total": len(results),
             "passed": sum(item["status"] == "passed" for item in results),
             "failed": sum(item["status"] == "failed" for item in results),

@@ -84,6 +84,8 @@ def build_graph(namespace: dict):
     builder.add_conditional_edges("query", namespace["route_after_query"],
                                   {"repair": "repair", "analysis": "data_analysis", "query_failed": "query_failed"})
     builder.add_edge("repair", "query")
-    for node in ("general", "data_write", "etl", "query_failed", "mcp_tool"):
+    builder.add_conditional_edges("mcp_tool", namespace["route_after_mcp_tool"],
+                                  {"metric_router": "metric_router", "finish": END})
+    for node in ("general", "data_write", "etl", "query_failed"):
         builder.add_edge(node, END)
     return builder.compile()
