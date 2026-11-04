@@ -1,0 +1,43 @@
+.data-service-panel { color: #263449; }
+.data-service-panel h2, .data-service-panel h3 { color: #172538; margin: 0 0 10px; }
+.service-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px; margin-bottom: 22px; background: #f7f9fc; border: 1px solid #e0e7ef; border-radius: 12px; }
+.service-intro h2 { margin-top: 8px; font-size: 21px; }
+.service-intro p, .service-form-description { margin: 0; color: #637185; line-height: 1.7; }
+.service-eyebrow { font-size: 12px; color: #52709a; }
+.service-query-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 22px; border: 1px solid #e0e7ef; border-radius: 12px; background: #fff; }
+.service-query-form label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; min-width: 0; }
+.service-query-form input, .service-query-form select, .service-query-form textarea { box-sizing: border-box; width: 100%; min-height: 38px; border: 1px solid #d9e1eb; background: #fff; border-radius: 7px; padding: 8px 10px; color: #263449; font: inherit; }
+.service-query-form small { color: #637185; line-height: 1.5; }
+.service-full-width, .service-form-description, .service-dimensions, .service-advanced, .service-actions { grid-column: 1 / -1; }
+.service-dimensions { display: flex; flex-wrap: wrap; gap: 16px; padding: 14px; border: 1px solid #e0e7ef; border-radius: 8px; }
+.service-dimensions legend { font-size: 13px; padding: 0 5px; }
+.service-dimensions label { flex-direction: row; align-items: center; }
+.service-dimensions input { width: 16px; min-height: 16px; accent-color: #3669bd; }
+.data-service-panel summary { cursor: pointer; font-size: 13px; color: #415e81; padding: 9px 0; }
+.service-advanced p, .service-api-example p { font-size: 13px; color: #637185; line-height: 1.7; }
+.service-advanced textarea { min-height: 80px; font-family: ui-monospace, monospace; }
+.service-actions { display: flex; gap: 14px; align-items: center; }
+.service-actions > button { border: 0; border-radius: 7px; background: #202224; color: #fff; padding: 10px 17px; font: inherit; cursor: pointer; }
+.service-actions > button:disabled { cursor: not-allowed; opacity: .5; }
+.service-actions > button:not(:disabled):hover { background: #353b43; }
+.service-actions span { color: #637185; font-size: 12px; }
+.service-result { margin-top: 22px; padding: 22px; border: 1px solid #d9e1eb; border-radius: 12px; }
+.service-result-heading { display: flex; gap: 15px; justify-content: space-between; align-items: center; }
+.service-result-heading span { color: #637185; font-size: 12px; }
+.service-result-meta { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 15px 0; font-size: 12px; color: #637185; }
+.service-version { font-size: 12px; overflow-wrap: anywhere; color: #637185; }
+.data-service-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; border-radius: 8px; background: #f5f7fa; color: #33445d; font: 12px/1.7 ui-monospace, monospace; }
+.service-api-example { margin: 18px 0; padding: 0 18px; border: 1px solid #e0e7ef; border-radius: 10px; }
+.service-error { color: #a33131; background: #fff4f3; padding: 12px 14px; border-radius: 7px; font-size: 13px; overflow-wrap: anywhere; }
+.service-notice { color: #25634c; background: #f0f8f3; padding: 12px 14px; border-radius: 7px; font-size: 13px; }
+.service-empty { color: #637185; padding: 16px 0; }
+.production-register { margin-bottom: 22px; }
+.production-job-list { margin: 12px 0 20px; border-bottom: 1px solid #e0e7ef; }
+.production-job-list > div { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 13px; }
+.production-runs { display: grid; gap: 14px; margin: 15px 0; }
+.production-runs article { border: 1px solid #e0e7ef; border-radius: 10px; padding: 18px; }
+.production-runs article p, .production-runs li { font-size: 13px; line-height: 1.7; }
+.production-status { padding: 4px 9px; border-radius: 5px; background: #f0f3f8; }
+.production-status.succeeded { color: #25634c; background: #edf7f0; }
+.production-status.failed, .production-status.needs_reconciliation { color: #a33131; background: #fff0ee; }
+@media (max-width: 760px) { .service-query-form { grid-template-columns: 1fr; padding: 16px; } .service-intro { padding: 16px; flex-direction: column; } .service-actions { flex-wrap: wrap; } }

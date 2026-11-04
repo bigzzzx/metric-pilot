@@ -38,6 +38,7 @@ class MetricContract(ContractModel):
     dialect: Literal["sqlite", "postgresql"] = "sqlite"
     measure_expression: str = Field(min_length=1, max_length=500)
     measure_alias: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    unit: str = Field(default="", max_length=40)
     time_column: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     requires_time_range: bool = True
     required_filters: list[MetricFilter] = Field(default_factory=list, max_length=20)

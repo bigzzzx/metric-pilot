@@ -8,12 +8,19 @@ from pydantic import Field, model_validator
 from backend.semantic_metrics.models import ContractModel
 
 
+class DimensionFilter(ContractModel):
+    dimension: str = Field(pattern=r'^[A-Za-z_][A-Za-z0-9_]*$')
+    operator: Literal['=', '!=', '>', '>=', '<', '<='] = '='
+    value: str | int | float | bool
+
+
 class MetricRequest(ContractModel):
     start_date: date | None = None
     end_date: date | None = None
     dimensions: list[str] = Field(default_factory=list,max_length=3)
     clarification: str = Field(default='',max_length=1000)
     intent: Literal['query','explain'] = 'query'
+    filters: list[DimensionFilter] = Field(default_factory=list, max_length=20)
     @model_validator(mode='after')
     def ordered_dates(self):
         if bool(self.start_date)!=bool(self.end_date) or (self.start_date and self.start_date>=self.end_date):
@@ -30,6 +37,13 @@ def quote(name):
 
 
 def literal(value):
+    if isinstance(value, bool):
+        return 'TRUE' if value else 'FALSE'
+    if isinstance(value, (int, float)):
+        import math
+        if not math.isfinite(value):
+            raise ValueError('Filter numbers must be finite')
+        return str(value)
     return "'"+str(value).replace("'","''")+"'"
 
 
@@ -90,8 +104,11 @@ def compile_metric_query(question,resolution,*,request=None,today=None,columns=N
         return stop('该指标没有已治理的时间字段，不能应用本次时间条件。')
     if any(key not in contract.dimensions for key in request.dimensions):
         return stop('请求的分组维度尚未在指标契约中定义。')
+    if any(item.dimension not in contract.dimensions for item in request.filters):
+        return stop('筛选维度尚未在指标契约中定义，不能修改或绕过固定口径。')
     if columns is None: raise ValueError('Verified columns are required')
     needed={f.column for f in contract.required_filters}|{contract.dimensions[k].column for k in request.dimensions}
+    needed |= {contract.dimensions[item.dimension].column for item in request.filters}
     if contract.time_column: needed.add(contract.time_column)
     if not needed<=set(columns): raise ValueError('Metric contract references unavailable columns')
     expression=validate_expression(contract,set(columns))
@@ -102,6 +119,8 @@ def compile_metric_query(question,resolution,*,request=None,today=None,columns=N
         select.append(value+' AS '+quote(key)); groups.append(value)
     select.append(expression+' AS '+quote(contract.measure_alias))
     filters=[quote(f.column)+' '+f.operator+' '+literal(f.value) for f in contract.required_filters]
+    filters += [quote(contract.dimensions[item.dimension].column)+' '+item.operator+' '+literal(item.value)
+                for item in request.filters]
     if request.start_date:
         filters += [quote(contract.time_column)+' >= '+literal(request.start_date.isoformat()),
                     quote(contract.time_column)+' < '+literal(request.end_date.isoformat())]

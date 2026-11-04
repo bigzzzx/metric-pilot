@@ -10,7 +10,7 @@ const terminalLabels = {
   cancelled: '已取消',
 };
 
-export default function ToolApprovalCard({ approval }) {
+export default function ToolApprovalCard({ approval, onResolved }) {
   const approvalId = approval?.approval_id || approval?.id;
   const [status, setStatus] = useState(approval?.status || 'pending');
   const [busy, setBusy] = useState(false);
@@ -33,6 +33,7 @@ export default function ToolApprovalCard({ approval }) {
       const payload = await decideApproval(approvalId, decision);
       setStatus(payload.approval?.status || decision);
       setResult(payload.tool_result || null);
+      await onResolved?.(payload);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -51,6 +52,7 @@ export default function ToolApprovalCard({ approval }) {
   return <section className="tool-approval-card" aria-label="高风险工具审批">
     <div className="approval-heading"><b>{approval?.tool_name || '高风险操作'}</b><span>{status === 'pending' ? '需要批准' : '审批已处理'}</span></div>
     <p>{summary}</p>
+    {approval?.requested_by && <small>申请人：{approval.requested_by}</small>}
     {target && <dl><dt>目标</dt><dd>{target}</dd></dl>}
     {effects.length > 0 && <ul>{effects.map((effect, index) => <li key={index}>{effect}</li>)}</ul>}
     {approval?.required_permission && <small>所需权限：<code>{approval.required_permission}</code></small>}

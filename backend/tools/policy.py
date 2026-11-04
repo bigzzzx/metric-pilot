@@ -97,7 +97,10 @@ def evaluate_tool_policy(
                 *json.loads(agent["mcp_tools"] or "[]"),
                 *(spec.id for value in json.loads(agent["mcp_servers"] or "[]") if value == server_id),
             ]
-        if not agent or spec.id not in configured:
+        # This server-owned service has exactly one registered tool and no LLM.
+        # It still passes the same user permission, risk and approval boundary.
+        service_call = context.agent_id == 'production-service' and spec.id == 'etl_execute' and spec.source == 'builtin'
+        if not service_call and (not agent or spec.id not in configured):
             return PolicyDecision(
                 False, risk, "agent_tool_denied",
                 f"当前智能体未绑定工具“{spec.name}”。",

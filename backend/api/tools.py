@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from backend.auth import require_user
 from backend.tools.async_executor import async_executor
 from backend.tools.approval_graph import resume_approval_flow
-from backend.tools.approvals import decide_approval, get_approval, list_approvals, save_approval_result
+from backend.tools.approvals import can_review_approval, decide_approval, get_approval, list_approvals, save_approval_result
 from backend.tools.errors import ToolApprovalError, ToolRuntimeError
 from backend.tools.models import ToolError, ToolExecutionContext, ToolResult, ToolStatus
 from backend.tools.registry import initialized_registry
@@ -80,7 +80,7 @@ def approvals(
 def approval_detail(approval_id: str, user: dict = Depends(require_user)):
     try:
         item = get_approval(approval_id)
-        if item["requested_by"] != user["id"]:
+        if not can_review_approval(item, user['id']):
             raise ToolApprovalError("approval_not_found", "审批请求不存在或你无权查看。")
         return item
     except ToolApprovalError as exc:

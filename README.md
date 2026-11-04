@@ -1,6 +1,6 @@
-# Governed Data Agent
+# Metric Pilot
 
-面向数据目录检索、指标口径治理、自然语言取数和结果分析的企业级 Data Agent。项目以 LangGraph 编排对话与数据任务，支持 PostgreSQL/SQLite、混合 RAG、Text-to-Metrics/Text-to-SQL 双路由、权限控制、Human-in-the-loop 和可视化结果。
+治理优先的 Data Agent 与轻量数据服务平台，面向数据目录、指标口径管理、自然语言取数和结果分析。项目以 LangGraph 编排对话与数据任务，支持 PostgreSQL/SQLite、混合 RAG、Text-to-Metrics/Text-to-SQL 双路由、统一指标 API、审批驱动的数据生产和可视化结果。
 
 > A governance-first Data Agent: resolve the business definition, validate permissions and schema, then generate and execute read-only SQL.
 
@@ -104,6 +104,16 @@ npm run api
 ```
 
 `.env` 中应配置 `VECTOR_STORE_BACKEND=milvus`、`MILVUS_URI=http://127.0.0.1:19530`、`MILVUS_DATABASE=data_agent` 与 `MILVUS_COLLECTION=knowledge_chunks_bge_small_zh_v1`。运行 `scripts/start-milvus-tunnel.ps1` 会同时建立 Milvus、BGE embedding 和 reranker 的安全隧道。知识库检索采用 BGE 稠密召回 + 中文 BM25 + RRF 融合 + cross-encoder 重排；若重排服务暂时不可用，会自动退回 RRF，不影响基础查询。若需要纯本地单元测试，可临时设为 `VECTOR_STORE_BACKEND=sqlite`、`EMBEDDING_BACKEND=hash` 与 `RERANK_BACKEND=none`。
+
+## 数据服务与数据生产
+
+“数据目录 → 数据服务”可直接按已认证指标、日期和维度查询；`GET /api/data-services/metrics` 获取当前账号有权查看的指标及版本，`POST /api/data-services/metrics/query` 通过相同契约编译器执行查询，无需调用模型。返回数据、单位、版本、来源和可验证的数据更新时间。时间范围采用起始日包含、结束日不包含。
+
+“数据目录 → 数据生产”可登记已支付订单日汇总任务，逐次批准后才写入专用 `mp_` 目标表。支持日期区间重算、请求幂等、质量失败回滚、持久化步骤和真实运行血缘。新产物进入目录草稿，沿用资产审核发布；每日数据刷新不会自动发布指标口径。
+
+PostgreSQL 使用单独的服务端写入 DSN，现有数据源账号保持只读。任务表单只填写该 DSN 的环境变量名称；本轮本地体验可以使用内置 SQLite 演示数仓，不需要配置新数据库。运行 `npm run verify:platform` 执行隔离 SQLite 验收；`npm run verify:platform:postgres` 使用 `.env` 中的 SSH 配置在服务器临时 PostgreSQL 实例中验收并自动清理。
+
+详见[实施方案与使用说明](docs/lightweight-data-platform.md)、[验收报告](docs/data-platform-acceptance.md)和[可选 Airflow 接入](deploy/airflow/README.md)。当前交付固定订单汇总链路，不含通用 ETL IDE、CDC 引擎或已经上线的无人值守调度。
 
 ## 指标口径原始文件
 

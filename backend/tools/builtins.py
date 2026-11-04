@@ -10,7 +10,6 @@ from backend.tools.models import (
     CatalogRagInput,
     CatalogRagOutput,
     HighRiskOperationInput,
-    HighRiskOperationOutput,
     MemoryForgetInput,
     MemoryMutationOutput,
     MemorySearchInput,
@@ -28,6 +27,7 @@ from backend.tools.registry import ToolRegistry, registry
 from backend.tools.sql_tool import run_readonly_sql
 from backend.tools.sql_write_tool import execute_sql_write
 from backend.query_quality.schema_lookup import SchemaLookupInput, SchemaLookupOutput, lookup_schema
+from backend.data_services.production import EtlRunInput, EtlRunOutput
 
 
 def _catalog_rag(payload: CatalogRagInput, context: ToolExecutionContext) -> dict:
@@ -67,11 +67,9 @@ def _memory_forget(payload: MemoryForgetInput, context: ToolExecutionContext) ->
     )}
 
 
-def _unavailable_high_risk(_payload: HighRiskOperationInput, _context: ToolExecutionContext) -> dict:
-    raise ToolRuntimeError(
-        "tool_unavailable",
-        "该高风险工具的审批与审计能力已经就绪，但尚未连接可执行的数据源或 ETL 平台。",
-    )
+def _etl_execute(payload: EtlRunInput, context: ToolExecutionContext) -> dict:
+    from backend.data_services.production_runner import execute_production
+    return execute_production(payload, context)
 
 
 def _sql_write(payload: SqlWriteInput, context: ToolExecutionContext) -> dict:
@@ -174,10 +172,10 @@ def register_builtin_tools(target: ToolRegistry | None = None) -> ToolRegistry:
         ),
         ToolSpec(
             id="etl_execute", name="ETL 任务执行",
-            description="启动或修改已登记的 ETL 任务；必须具有执行权限并逐次审批。",
-            input_schema=HighRiskOperationInput, output_schema=HighRiskOperationOutput,
-            handler=_unavailable_high_risk, risk_level=RiskLevel.HIGH,
-            required_permission="etl.execute", allowed_agents=frozenset({"data-query-agent"}),
+            description="按日期区间重算已登记的已支付订单日汇总任务；必须具有 etl.execute 权限并逐次审批。",
+            input_schema=EtlRunInput, output_schema=EtlRunOutput,
+            handler=_etl_execute, risk_level=RiskLevel.HIGH,
+            required_permission="etl.execute", allowed_agents=frozenset({"data-query-agent", "production-service"}),
             redact_input=_risk_summary,
         ),
     ):

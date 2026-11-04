@@ -40,16 +40,16 @@ def lineage_for_asset(user_id: str, asset_id: str, hops: int = 2) -> dict[str, l
         con.close(); raise LookupError("Lineage asset is not published")
     anchor = con.execute("SELECT id FROM catalog_lineage_nodes WHERE asset_id=? AND published=1", (asset_id,)).fetchone()
     if not anchor: con.close(); return {"nodes":[],"edges":[]}
-    seen, frontier, edges = {anchor["id"]}, {anchor["id"]}, []
+    seen, frontier, edges = {anchor["id"]}, {anchor["id"]}, {}
     for _ in range(max(1,min(hops,3))):
         if not frontier: break
         holders = ",".join("?" for _ in frontier)
         matched = [dict(row) for row in con.execute(f"SELECT * FROM catalog_lineage_edges WHERE published=1 AND (from_node_id IN ({holders}) OR to_node_id IN ({holders}))", [*frontier,*frontier])]
         next_frontier: set[str] = set()
-        for edge in matched: edges.append(edge); next_frontier.update((edge["from_node_id"],edge["to_node_id"]))
+        for edge in matched: edges[edge['id']] = edge; next_frontier.update((edge["from_node_id"],edge["to_node_id"]))
         frontier = next_frontier - seen; seen.update(next_frontier)
     nodes = [dict(row) for row in con.execute("SELECT * FROM catalog_lineage_nodes WHERE id IN (%s)" % ",".join("?" for _ in seen),list(seen))]
     for node in nodes:
         if node.get("asset_id") and (not con.execute("SELECT 1 FROM catalog_assets WHERE id=? AND publish_status='published'", (node["asset_id"],)).fetchone() or not can_access(user_id, DISCOVER, asset_id=node["asset_id"],connection=con)):
             node.update({"display_name":"受限资产","description":"你无权查看此上游或下游资产的详情。","restricted":True})
-    con.close(); return {"nodes":nodes,"edges":edges}
+    con.close(); return {"nodes":nodes,"edges":list(edges.values())}

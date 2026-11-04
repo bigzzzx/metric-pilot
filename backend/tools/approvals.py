@@ -155,18 +155,33 @@ def list_approvals(
     connection_factory: ConnectionFactory | None = None,
 ) -> list[dict[str, Any]]:
     connection = (connection_factory or db)()
-    if status:
-        rows = connection.execute(
-            "SELECT * FROM tool_approval_requests WHERE requested_by=? AND status=? ORDER BY created_at DESC",
-            (user_id, status),
-        ).fetchall()
-    else:
-        rows = connection.execute(
-            "SELECT * FROM tool_approval_requests WHERE requested_by=? ORDER BY created_at DESC LIMIT 100",
-            (user_id,),
-        ).fetchall()
+    from backend.catalog.service import is_platform_admin
+    admin = is_platform_admin(user_id, connection)
+    rows = connection.execute('''SELECT * FROM tool_approval_requests
+        WHERE (requested_by=? OR (?=1 AND tool_id='etl_execute'
+          AND json_extract(context_json,'$.agent_id')='production-service'))
+        AND (? IS NULL OR status=?) ORDER BY created_at DESC LIMIT 100''',
+        (user_id, int(admin), status, status)).fetchall()
     connection.close()
     return [_row(row) for row in rows]
+
+
+def _can_review(connection, row, user_id):
+    if row['requested_by'] == user_id:
+        return True
+    from backend.catalog.service import is_platform_admin
+    item = dict(row)
+    context = item.get('context') or json.loads(item.get('context_json') or '{}')
+    return (item['tool_id'] == 'etl_execute' and context.get('agent_id') == 'production-service'
+            and is_platform_admin(user_id, connection))
+
+
+def can_review_approval(approval, user_id, connection_factory=None):
+    con = (connection_factory or db)()
+    try:
+        return _can_review(con, approval, user_id)
+    finally:
+        con.close()
 
 
 def decide_approval(
@@ -182,7 +197,7 @@ def decide_approval(
     try:
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute("SELECT * FROM tool_approval_requests WHERE id=?", (approval_id,)).fetchone()
-        if not row or row["requested_by"] != user_id:
+        if not row or not _can_review(connection, row, user_id):
             raise ToolApprovalError("approval_not_found", "审批请求不存在或你无权处理。")
         if row["status"] != "pending":
             if row["status"] == decision:
