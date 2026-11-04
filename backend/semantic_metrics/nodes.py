@@ -7,6 +7,7 @@ from backend.semantic_metrics.models import MetricResolution
 from backend.semantic_metrics.compiler import MetricRequest, fast_request, compile_metric_query
 from backend.semantic_metrics.repository import metric_records
 from backend.tools.models import ToolStatus
+from backend.data_services.metrics import compile_verified_plan
 
 
 def metric_router(state):
@@ -59,7 +60,7 @@ async def metric_plan(state):
                 +json.dumps(metric.model_dump(mode='json'),ensure_ascii=False))
         request=await agent.complete_structured('data-query-agent',agent.messages(state,prompt),MetricRequest,state.get('model_id'))
     try:
-        plan=compile_metric_query(state['message'],resolution,request=request,columns={c['name'] for c in table['columns']})
+        plan=compile_verified_plan(state['message'],resolution,request,table)
     except ValueError:
         return stop('指标契约引用了不可用字段或不支持的表达式，请重新审核指标。')
     schemas={'tables':tables,'unavailable':[]}

@@ -8,6 +8,8 @@
     "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1",
     "health": ".\\.venv\\Scripts\\python.exe scripts/check_runtime.py",
     "verify:postgres": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py",
+    "verify:platform": ".\\.venv\\Scripts\\python.exe scripts/verify_data_platform.py",
+    "verify:platform:postgres": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-data-platform-postgres.ps1",
     "evaluate:postgres": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py --llm",
     "evaluate:postgres:stability": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py --stability --output .data/evals/postgresql-stability-latest.json",
     "build": "vite build",

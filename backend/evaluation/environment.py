@@ -14,7 +14,7 @@ SQL_ATTEMPTS = []
 def evaluation_environment(directory):
     from backend import agent
     from backend.main import init_storage
-    from backend.catalog import rag_documents, retrieval, service
+    from backend.catalog import rag_documents, retrieval, service, quality_context
     from backend.hybrid_retrieval import bm25_rank
     from backend.tools import sql_tool
     from backend.query_quality import schema_lookup
@@ -73,7 +73,7 @@ def evaluation_environment(directory):
                                   error={"code": "permission_denied" if exc.status_code == 403 else getattr(exc, "code", "sql_error"), "message": str(exc.detail)})
 
     with ExitStack() as stack:
-        for module in (rag_documents, retrieval, service, sql_tool, schema_lookup, metric_repository, metric_wiki):
+        for module in (rag_documents, retrieval, service, quality_context, sql_tool, schema_lookup, metric_repository, metric_wiki):
             stack.enter_context(patch.object(module, "db", factory))
         stack.enter_context(patch.object(agent, "tool_executor", FixtureTools()))
         stack.enter_context(patch.object(agent, "has_tool", lambda _agent, tool: tool in {"chat", "catalog_rag", "readonly_sql", "query_result_analysis"}))

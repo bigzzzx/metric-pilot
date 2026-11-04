@@ -69,6 +69,7 @@ from backend.tools.registry import initialized_registry
 from backend.turn_cache import load_cached_response, response_cache_identity, store_cached_response
 from backend.summary_background import summarize_after_response
 from backend.api.attachments import router as attachments_router
+from backend.api.data_services import router as data_services_router
 from backend.attachments import repository as attachment_repository
 
 
@@ -164,6 +165,8 @@ def init_storage(connection_factory=None):
     con.execute("INSERT OR IGNORE INTO knowledge_bases(id,name,description) VALUES (?,?,?)", ("business-knowledge", "业务知识库", "存放指标口径、业务别名、数据使用说明等可检索知识。"))
     con.commit(); con.close()
     init_catalog_schema(connection_factory)
+    from backend.data_services.storage import init_schema as init_data_services
+    init_data_services(connection_factory)
     attachment_repository.init_schema(connection_factory)
     from backend.visualization.node import init_bindings
     init_bindings(connection_factory)
@@ -260,6 +263,7 @@ app.include_router(admin_router)
 app.include_router(tools_router)
 app.include_router(metadata_sync_router)
 app.include_router(quality_router)
+app.include_router(data_services_router)
 
 
 @app.exception_handler(Exception)

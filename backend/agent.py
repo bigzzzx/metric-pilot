@@ -3,6 +3,7 @@ import json
 import asyncio
 import re
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from backend.graph_runtime.state import AgentInputState, AgentOutputState, AgentOverallState
 
@@ -783,15 +784,30 @@ def deterministic_query_answer(state: AgentOverallState, result: list[dict]) -> 
 
 
 async def etl_agent(state: AgentOverallState) -> AgentOverallState:
-    arguments = {
-        "operation": "execute",
-        "summary": state["message"],
-        "target": "已登记的 ETL 平台",
-        "estimated_effects": ["可能启动或修改 ETL 任务"],
-    }
+    from backend.data_services.production import ProductionChatPlan, RunRequest, list_jobs, prepare_run
+    available = await asyncio.to_thread(list_jobs, state.get('user_id', ''))
+    available = [job for job in available if job['enabled']]
+    if not available:
+        return {**state, 'final': {'answer': '当前没有可用的已登记生产任务，请管理员在“数据目录 → 数据生产”中登记任务。'}}
+    prompt = ('Select exactly one registered production job and extract its date range. Never generate SQL or code. '
+              'Return job_id, start_date/end_date (ISO date, exclusive end), clarification. '
+              'If the job or dates are unclear ask for clarification. For task edits or changed status, source, fields or grain, '
+              'return clarification; never discard unsupported changes. Never invent an ID. Jobs:\n' +
+              json.dumps([{'job_id': j['id'], 'name': j['name']} for j in available], ensure_ascii=False))
+    requested = await complete_structured('data-query-agent', messages(state, prompt), ProductionChatPlan, state.get('model_id'))
+    if (requested.clarification or not requested.start_date or not requested.end_date or
+            requested.job_id not in {job['id'] for job in available}):
+        return {**state, 'final': {'answer': requested.clarification or '请明确已登记的任务名称及起止日期（结束日不含）。'}}
+    try:
+        job, arguments = await asyncio.to_thread(prepare_run, requested.job_id,
+            RunRequest(start_date=requested.start_date, end_date=requested.end_date, request_key=str(uuid.uuid4())),
+            state.get('user_id', ''))
+    except (HTTPException, ValueError) as exc:
+        return {**state, 'final': {'answer': str(exc.detail) if isinstance(exc, HTTPException) else str(exc)}}
+    context = _tool_context(state, 'etl_execute', 'data-query-agent').model_copy(update={
+        'resource_type': 'asset', 'resource_id': job['source_asset_id'], 'domain_id': job['config']['domain_id']})
     outcome = await asyncio.to_thread(
-        start_approval_flow, "etl_execute", arguments,
-        _tool_context(state, "etl_execute", "data-query-agent"),
+        start_approval_flow, 'etl_execute', arguments.model_dump(mode='json'), context,
     )
     if outcome.status is ToolStatus.APPROVAL_REQUIRED:
         answer = "该操作可能启动或修改 ETL 任务，已暂停执行，等待你批准本次操作。"

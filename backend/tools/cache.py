@@ -75,6 +75,9 @@ def dependency_fingerprint(connection_factory: Callable[[], Any]) -> str:
             "sources": [tuple(row) for row in connection.execute(
                 "SELECT id,enabled,COALESCE(last_synced_at,'') FROM data_sources ORDER BY id"
             )],
+            "data_versions": [tuple(row) for row in connection.execute(
+                "SELECT asset_id,data_version,run_id FROM asset_materializations ORDER BY asset_id"
+            )] if connection.execute("SELECT 1 FROM sqlite_master WHERE name='asset_materializations'").fetchone() else [],
             # Extension and knowledge deletion must change the cache identity
             # immediately, even while an older Redis entry is still within TTL.
             "knowledge_documents": [tuple(row) for row in connection.execute(
