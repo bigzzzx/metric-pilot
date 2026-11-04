@@ -173,7 +173,18 @@ def main():
     if args.postgres and not dsn:
         raise SystemExit('METRIC_PILOT_TEST_PG_DSN is required; credentials are never printed')
     with tempfile.TemporaryDirectory(prefix='metric-pilot-platform-') as directory:
-        result = validate(Path(directory), dsn)
+        # Set paths BEFORE importing the app so even an accidentally unpatched
+        # consumer cannot read the regular platform DB. Also exercises clean CI.
+        import backend.core as core
+        core.DATA_DIR = Path(directory)
+        core.PLATFORM_DB = core.DATA_DIR / 'platform.db'
+        core.DEMO_DB = core.DATA_DIR / 'warehouse.db'
+        core.db.__defaults__ = (core.PLATFORM_DB,)
+        try:
+            result = validate(Path(directory), dsn)
+        finally:
+            from backend.checkpoint import _connection
+            _connection.close()
     print(json.dumps(result,ensure_ascii=True,indent=2))
 
 

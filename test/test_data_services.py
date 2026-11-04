@@ -317,3 +317,16 @@ def test_account_disabled_after_approval_cannot_execute(platform):
     result = runtime.invoke('etl_execute',arguments.model_dump(mode='json'),context,approval_id=pending.approval['approval_id'])
     assert result.error.code == 'permission_denied'
     assert production.list_runs('eval-admin') == []
+
+
+def test_cli_acceptance_works_from_fresh_external_directory(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).resolve().parents[1] / 'scripts' / 'verify_data_platform.py'
+    result = subprocess.run([sys.executable,str(script)],cwd=tmp_path,
+        env={**os.environ,'PYTHONIOENCODING':'utf-8'},capture_output=True,text=True,encoding='utf-8',timeout=60)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report['passed'] == report['total'] == 27 and report['llm_calls'] == 0
