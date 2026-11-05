@@ -96,6 +96,8 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
             ))
 
         for relation in con.execute("SELECT * FROM catalog_relationships WHERE status='published' ORDER BY id"):
+            from backend.lineage.projection import legacy_relation_provenance
+            provenance = legacy_relation_provenance(relation)
             left, right = assets_by_id.get(str(relation["from_asset_id"])), assets_by_id.get(str(relation["to_asset_id"]))
             if not left or not right:
                 continue
@@ -111,7 +113,7 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
                 title=f"关联：{left['physical_name']} 与 {right['physical_name']}",
                 content=(f"关联条件：{relation['join_condition']}。关系类型：{relation['relation_type']}，"
                          f"基数：{relation['cardinality']}，推荐 {relation['recommended_join']}。"
-                         f"说明：{relation['description']}。已验证：{'是' if relation['verified'] else '否'}。"),
+                         f"说明：{relation['description']}。来源：{provenance}；演示及历史声明不代表当前业务已批准。"),
                 keywords=[left["physical_name"], relation["from_column"], right["physical_name"], relation["to_column"], "关联", "join"],
                 asset_ids=[str(left["id"]), str(right["id"])], domain_id=left["domain_id"],
                 source_id=left["source_id"] if left["source_id"] == right["source_id"] else None,
@@ -125,6 +127,9 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
             wiki = wiki_document(metric)
             if wiki:
                 documents.append(wiki)
+
+        from backend.lineage.projection import rag_documents as lineage_documents
+        documents.extend(lineage_documents(con))
 
         for term in con.execute("SELECT * FROM catalog_terms WHERE publish_status='published' ORDER BY id"):
             aliases = _json(term["aliases_json"], [])
@@ -142,6 +147,9 @@ def published_catalog_documents(connection: sqlite3.Connection | None = None) ->
 
 def is_document_authorized(document: dict[str, Any], user_id: str, connection: sqlite3.Connection) -> bool:
     """Require access to every asset referenced by a RAG document."""
+    if document.get('lineage_candidate_id'):
+        from backend.lineage.projection import document_visible
+        if not document_visible(connection,document,user_id): return False
     if document.get('kind')=='metric_wiki':
         from backend.semantic_metrics.wiki import visible_wiki
         row=connection.execute('SELECT * FROM catalog_metrics WHERE id=?',(document['metric_id'],)).fetchone()

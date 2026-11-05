@@ -167,6 +167,8 @@ def init_storage(connection_factory=None):
     init_catalog_schema(connection_factory)
     from backend.data_services.storage import init_schema as init_data_services
     init_data_services(connection_factory)
+    from backend.lineage.storage import init_schema as init_lineage
+    init_lineage(connection_factory)
     attachment_repository.init_schema(connection_factory)
     from backend.visualization.node import init_bindings
     init_bindings(connection_factory)
@@ -264,6 +266,8 @@ app.include_router(tools_router)
 app.include_router(metadata_sync_router)
 app.include_router(quality_router)
 app.include_router(data_services_router)
+from backend.api.lineage import router as lineage_router
+app.include_router(lineage_router)
 
 
 @app.exception_handler(Exception)

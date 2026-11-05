@@ -49,7 +49,10 @@ def lineage_for_asset(user_id: str, asset_id: str, hops: int = 2) -> dict[str, l
         for edge in matched: edges[edge['id']] = edge; next_frontier.update((edge["from_node_id"],edge["to_node_id"]))
         frontier = next_frontier - seen; seen.update(next_frontier)
     nodes = [dict(row) for row in con.execute("SELECT * FROM catalog_lineage_nodes WHERE id IN (%s)" % ",".join("?" for _ in seen),list(seen))]
+    for edge in edges.values():
+        edge['provenance'] = 'run_observed' if edge['id'].startswith('production:') else 'demo_seed' if edge['id'].startswith('lineage-') else 'legacy_unclassified'
     for node in nodes:
+        node['provenance'] = 'run_observed' if node['id'].startswith('production:') else 'demo_seed' if node['id'].startswith('lineage-') else 'legacy_unclassified'
         if node.get("asset_id") and (not con.execute("SELECT 1 FROM catalog_assets WHERE id=? AND publish_status='published'", (node["asset_id"],)).fetchone() or not can_access(user_id, DISCOVER, asset_id=node["asset_id"],connection=con)):
             node.update({"display_name":"受限资产","description":"你无权查看此上游或下游资产的详情。","restricted":True})
     con.close(); return {"nodes":nodes,"edges":list(edges.values())}

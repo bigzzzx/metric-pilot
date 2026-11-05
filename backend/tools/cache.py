@@ -91,6 +91,19 @@ def dependency_fingerprint(connection_factory: Callable[[], Any]) -> str:
                 "SELECT id,server_id,enabled,unavailable,updated_at FROM mcp_tools ORDER BY id"
             )],
         }
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='lineage_candidates'").fetchone():
+            values['lineage_versions'] = [tuple(r) for r in connection.execute(
+                "SELECT id,version,status FROM lineage_candidates ORDER BY id")]
+            values['lineage_sources'] = [tuple(r) for r in connection.execute(
+                "SELECT source_ref,version,status FROM lineage_source_states ORDER BY source_ref")]
+            # A newly observed constraint snapshot can invalidate evidence before
+            # any catalog review changes the asset's own catalog_version.
+            values['lineage_discoveries'] = [tuple(r) for r in connection.execute('''
+                SELECT s.source_id,s.version,s.snapshot_hash FROM catalog_sync_snapshots s WHERE s.version=
+                (SELECT MAX(x.version) FROM catalog_sync_snapshots x WHERE x.source_id=s.source_id) ORDER BY s.source_id''')]
+            values['lineage_declarations'] = [tuple(r) for r in connection.execute('''
+                SELECT source_id,version,content_hash FROM catalog_technical_state
+                WHERE entity_type='relationships' ORDER BY source_id,entity_key''')]
         return _hash(values)
     finally:
         connection.close()

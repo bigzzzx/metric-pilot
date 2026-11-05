@@ -101,6 +101,8 @@ def list_assets(user_id: str, *, query: str = "", domain_id: str | None = None, 
 
 def _relationship_view(con: sqlite3.Connection, row: sqlite3.Row, user_id: str) -> dict[str, Any]:
     result = dict(row)
+    from backend.lineage.projection import legacy_relation_provenance
+    result['provenance'] = legacy_relation_provenance(row)
     for prefix, field in (("from","from_asset_id"),("to","to_asset_id")):
         asset = con.execute("SELECT display_name,physical_name,publish_status FROM catalog_assets WHERE id=?", (row[field],)).fetchone()
         if asset and asset["publish_status"] != "published" and not can_access(user_id, MANAGE, connection=con):
@@ -120,6 +122,8 @@ def get_asset(user_id: str, asset_id: str) -> dict[str, Any]:
         column["masked_in_samples"] = column["masking_strategy"] != "none" or column["sensitivity"] in {"sensitive","restricted"}
     result["columns"] = columns
     result["relationships"] = [_relationship_view(con,row,user_id) for row in con.execute("SELECT * FROM catalog_relationships WHERE from_asset_id=? OR to_asset_id=?", (asset_id,asset_id)) if can_manage or row["status"] == "published"]
+    from backend.lineage.projection import relationships as evidence_relationships
+    result['relationships'].extend(evidence_relationships(con,user_id,asset_id))
     if can_manage:
         note = con.execute("SELECT detail_json FROM catalog_audit_logs WHERE entity_id=? AND action IN ('reject','withdraw') ORDER BY id DESC LIMIT 1", (asset_id,)).fetchone()
         result["review_note"] = _json(note["detail_json"], {}).get("reason", "") if note else ""

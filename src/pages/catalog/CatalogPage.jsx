@@ -5,9 +5,10 @@ import DataSourceAdminPanel from './DataSourceAdminPanel.jsx';
 import MetricCenter from './MetricCenter.jsx';
 import DataServicesPanel from './DataServicesPanel.jsx';
 import ProductionPanel from './ProductionPanel.jsx';
+import LineageEvidence, { FieldLineagePanel, lineageLabel } from './LineageEvidence.jsx';
 
 const tabs = [
-  ['assets', '数据资产'], ['metrics', '指标中心'], ['services', '数据服务'], ['production', '数据生产'], ['terms', '业务术语'], ['lineage', '数据血缘'], ['sources', '数据源'],
+  ['assets', '数据资产'], ['metrics', '指标中心'], ['services', '数据服务'], ['production', '数据生产'], ['terms', '业务术语'], ['lineage', '关联与血缘'], ['sources', '数据源'],
 ];
 
 const label = value => ({ ODS: 'ODS · 贴源层', DWD: 'DWD · 明细层', DIM: 'DIM · 维度层', DWS: 'DWS · 汇总层', ADS: 'ADS · 应用层', raw: '贴源', detail: '明细', summary: '汇总', application: '应用', refined: '精炼层', internal: '内部', sensitive: '敏感', certified: '已认证', draft: '待审核', published: '已发布', rejected: '已退回', validated: '已核对' }[value] || value || '—');
@@ -58,8 +59,8 @@ function AssetDetail({ assetId, onClose, domains, onCatalogChanged }) {
     {tab === 'overview' && <div className="detail-grid"><article><h3>业务语义</h3><dl><dt>业务域</dt><dd>{asset.domain_id}</dd><dt>数据粒度</dt><dd>{asset.data_grain || '未维护'}</dd><dt>主键</dt><dd><code>{asset.primary_key || '未维护'}</code></dd><dt>数据源</dt><dd>{asset.source_id}</dd></dl></article><article><h3>治理状态</h3><dl><dt>发布状态</dt><dd>{asset.publish_status}</dd><dt>可执行查询</dt><dd>{asset.can_query ? '是（列级规则生效）' : '否'}</dd><dt>敏感级别</dt><dd>{label(asset.sensitivity)}</dd><dt>认证</dt><dd>{label(asset.certification_status)}</dd></dl></article></div>}
     {tab === 'columns' && <div className="catalog-table-wrap"><table className="catalog-data-table"><thead><tr><th>字段</th><th>类型</th><th>语义角色</th><th>说明</th><th>敏感级别</th></tr></thead><tbody>{asset.columns.map(column => <tr key={column.id}><td><b>{column.display_name}</b><code>{column.physical_name}</code></td><td>{column.data_type}</td><td>{column.semantic_role}</td><td>{column.description}<Tags values={column.aliases} /></td><td><span className={`sensitivity ${column.sensitivity}`}>{label(column.sensitivity)}</span>{column.masked_in_samples && <small> 样例脱敏</small>}</td></tr>)}</tbody></table></div>}
     {tab === 'sample' && <div><p className="sample-notice">{sample?.notice || '按需加载最多 5 条样例；敏感字段会在服务端脱敏。'}</p>{!sample ? <p className="page-subtitle">正在获取脱敏样例…</p> : <div className="catalog-table-wrap"><table className="catalog-data-table"><thead><tr>{sample.columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{sample.rows.map((row,index) => <tr key={index}>{sample.columns.map(column => <td key={column}>{String(row[column] ?? '')}</td>)}</tr>)}</tbody></table></div>}</div>}
-    {tab === 'relations' && <div className="relation-list">{asset.relationships.filter(item => item.visible).length ? asset.relationships.filter(item => item.visible).map(item => <article key={item.id}><b>{item.from_asset?.physical_name}.{item.from_column}</b><span> {item.recommended_join} · {item.cardinality} → </span><b>{item.to_asset?.physical_name}.{item.to_column}</b><p>{item.description}</p></article>) : <p className="page-subtitle">当前资产没有已发布的表关联。</p>}</div>}
-    {tab === 'lineage' && <div>{!lineage ? <p className="page-subtitle">正在加载有向血缘…</p> : <LineageGraph data={lineage} />}</div>}
+    {tab === 'relations' && <div className="relation-list">{asset.relationships.filter(item => item.visible).length ? asset.relationships.filter(item => item.visible).map(item => <article key={item.id}><b>{item.from_asset?.physical_name}.{item.from_column}</b><span> {lineageLabel(item.recommended_join)} · {lineageLabel(item.cardinality)} → </span><b>{item.to_asset?.physical_name}.{item.to_column}</b><p>{item.description}</p><small>{lineageLabel(item.provenance)}{item.source_ref ? ` · ${item.source_ref}` : ' · 不等同于新证据的人工业务审核'}</small></article>) : <p className="page-subtitle">当前资产没有已发布的表关联。</p>}</div>}
+    {tab === 'lineage' && <div>{!lineage ? <p className="page-subtitle">正在加载有向血缘…</p> : <LineageGraph data={lineage} />}<FieldLineagePanel asset={asset}/></div>}
     {tab === 'metrics' && <div className="metric-grid">{asset.metrics.map(metric => <article key={metric.id}><b>{metric.display_name}</b><p>{metric.description}</p><code>{metric.formula}</code><Tags values={[metric.certification_status]} /></article>)}</div>}
     {tab === 'quality' && <div className="quality-list">{asset.quality_history.length ? asset.quality_history.map(item => <QualitySnapshot key={item.run_id || item.observed_at} item={item} />) : <p className="page-subtitle">尚未执行真实质量检测。</p>}</div>}
   </section>;
@@ -67,7 +68,7 @@ function AssetDetail({ assetId, onClose, domains, onCatalogChanged }) {
 
 function LineageGraph({ data }) {
   const nodes = data.nodes || []; const positions = nodes.map((node, index) => ({ ...node, x: 28 + (index % 3) * 260, y: 40 + Math.floor(index / 3) * 122 })); const byId = Object.fromEntries(positions.map(node => [node.id,node]));
-  return <div className="lineage-canvas"><p className="page-subtitle">有向图：源表 → 同步/转换任务 → 已发布资产。表关联在“表关联”页签单独展示。</p><svg viewBox="0 0 820 350" role="img" aria-label="数据血缘有向图"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#7c8999" /></marker></defs>{data.edges.map(edge => { const from=byId[edge.from_node_id], to=byId[edge.to_node_id]; if(!from||!to) return null; return <line key={edge.id} x1={from.x+178} y1={from.y+30} x2={to.x} y2={to.y+30} markerEnd="url(#arrow)" />; })}{positions.map(node => <g key={node.id} transform={`translate(${node.x},${node.y})`}><rect width="176" height="60" rx="9" className={node.restricted?'restricted-node':''}/><text x="12" y="24">{node.node_type}</text><text x="12" y="43" className="lineage-node-title">{node.display_name}</text></g>)}</svg></div>;
+  return <div className="lineage-canvas"><p className="page-subtitle">有向图：源表 → 同步/转换任务 → 已发布资产。表关联在“表关联”页签单独展示。来源：{[...new Set((data.edges||[]).map(e=>lineageLabel(e.provenance)))].join('、') || '暂无记录'}；演示预置不代表真实运行。</p><svg viewBox="0 0 820 350" role="img" aria-label="数据血缘有向图"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#7c8999" /></marker></defs>{data.edges.map(edge => { const from=byId[edge.from_node_id], to=byId[edge.to_node_id]; if(!from||!to) return null; return <line key={edge.id} x1={from.x+178} y1={from.y+30} x2={to.x} y2={to.y+30} markerEnd="url(#arrow)" />; })}{positions.map(node => <g key={node.id} transform={`translate(${node.x},${node.y})`}><rect width="176" height="60" rx="9" className={node.restricted?'restricted-node':''}/><text x="12" y="24">{node.node_type} · {lineageLabel(node.provenance)}</text><text x="12" y="43" className="lineage-node-title">{node.display_name}</text></g>)}</svg></div>;
 }
 
 export default function CatalogPage({ isCatalogAdmin = false }) {
@@ -85,7 +86,7 @@ export default function CatalogPage({ isCatalogAdmin = false }) {
     {tab === 'services' && <DataServicesPanel />}
     {tab === 'production' && <ProductionPanel assets={overview.assets} isAdmin={isCatalogAdmin} onCatalogChanged={load} />}
     {tab === 'terms' && <div className="term-grid">{overview.terms.map(term => <article key={term.id}><b>{term.display_name}</b><code>{term.term}</code><p>{term.definition}</p><Tags values={term.aliases} /></article>)}</div>}
-    {tab === 'lineage' && <div className="catalog-empty"><h2>选择一张数据资产查看血缘</h2><p>数据血缘采用左到右的有向图，展示上游源表、同步/转换任务和下游已发布资产；表之间的 Join 关系则在资产详情中单独维护。</p><button onClick={() => setTab('assets')}>浏览数据资产</button></div>}
+    {tab === 'lineage' && <LineageEvidence assets={overview.assets} isAdmin={isCatalogAdmin}/>}
     {tab === 'sources' && isCatalogAdmin && <DataSourceAdminPanel onCatalogChanged={load} />}
   </>}</section>;
 }

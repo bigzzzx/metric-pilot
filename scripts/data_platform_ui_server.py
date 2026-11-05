@@ -34,6 +34,8 @@ def main():
                 if column['physical_name'] not in columns:
                     con.execute('DELETE FROM catalog_columns WHERE id=?',(column['id'],))
         con.commit(); con.close(); physical.close()
+        from backend.evaluation.lineage import prepare_lineage_fixture
+        prepare_lineage_fixture(core.db,core.DEMO_DB)
         import uvicorn
         try:
             uvicorn.run(app, host='127.0.0.1', port=3302)

@@ -73,6 +73,8 @@ def execute_metric_query(payload: MetricServiceQuery, user_id: str):
         # Recheck version and authorization immediately before the existing read-only boundary.
         resolve_service_metric(user_id, payload.metric_id, payload.version)
         rows = run_readonly_sql(plan['sql'], user_id, plan['source_id'])
+        from backend.lineage.capture import record_executed_query
+        record_executed_query(plan['sql'],user_id,plan['source_id'],'metric-service',connection_factory=db)
         row_count, status = len(rows), 'success'
         con = db()
         try:
