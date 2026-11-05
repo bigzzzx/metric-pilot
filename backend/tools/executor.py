@@ -154,6 +154,10 @@ class ToolExecutor:
                 connection_factory=self.connection_factory,
             )
             log_event("tool.executed", tool_id=tool_id, duration_ms=duration)
+            if tool_id == 'readonly_sql':
+                from backend.lineage.capture import record_executed_query
+                record_executed_query(normalized['sql'],context.user_id,normalized.get('source_id'),
+                    'tool:readonly_sql',connection_factory=self.connection_factory)
             result = ToolResult(
                 status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
                 data=serialized, audit_id=audit_id,

@@ -153,6 +153,8 @@ def execute_production(payload, context):
         _publish_artifact(job, source, run_id, payload, result, now)
         steps.append({'name': '记录资产数据版本、质量和实际血缘', 'status': 'succeeded'})
         _finish(run_id, 'succeeded', steps, result)
+        from backend.lineage.capture import safe_capture_production
+        safe_capture_production(run_id,connection_factory=db)
         return dict(accepted=True, message=f"任务已完成：{result['days']} 个日期、{result['orders']} 笔订单。产物请在数据资产中审核发布。",
                     run_id=run_id, job_id=job['id'], status='succeeded', idempotent=False)
     except Exception as exc:
@@ -162,6 +164,8 @@ def execute_production(payload, context):
             code, message = 'metadata_reconciliation_required', '数据已提交，但资产运行元数据未完成，请管理员核对该运行记录后恢复登记。'
         steps.append({'name': '登记元数据' if committed else '事务执行与质量检查', 'status': 'failed', 'code': code})
         _finish(run_id, 'needs_reconciliation' if committed else 'failed', steps, result, code, message)
+        from backend.lineage.capture import safe_capture_production
+        safe_capture_production(run_id,connection_factory=db)
         raise ToolRuntimeError(code, message) from exc
 
 
@@ -188,4 +192,6 @@ def reconcile_run(run_id, user_id):
     _publish_artifact(job, source, run_id, payload, run['result'], run['started_at'])
     steps = [*run['steps'], {'name': '管理员恢复资产元数据登记', 'status': 'succeeded', 'at': datetime.now(UTC).isoformat()}]
     _finish(run_id, 'succeeded', steps, run['result'])
+    from backend.lineage.capture import safe_capture_production
+    safe_capture_production(run_id,connection_factory=db)
     return {'run_id':run_id, 'status':'succeeded', 'message':'已恢复资产、质量和血缘登记，未重复执行数据写入。'}

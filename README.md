@@ -115,6 +115,12 @@ PostgreSQL 使用单独的服务端写入 DSN，现有数据源账号保持只�
 
 详见[实施方案与使用说明](docs/lightweight-data-platform.md)、[验收报告](docs/data-platform-acceptance.md)和[可选 Airflow 接入](deploy/airflow/README.md)。当前交付固定订单汇总链路，不含通用 ETL IDE、CDC 引擎或已经上线的无人值守调度。
 
+## 关联发现与字段血缘
+
+“数据目录 → 关联与血缘”支持导入静态 SQL/ETL 定义、上传业务材料和显式绑定的 OpenLineage 风格事件。SQLGlot 只做解析，不执行导入 SQL；文档模型只生成带原文位置的候选。管理员分别进行技术校验、业务批准和发布，已发布候选才进入授权目录与 Agent RAG。支持字段上游/下游、过滤/分组影响、原始证据、撤回失效和索引重试。
+
+平台成功查询、实际数据库发现快照、历史目录声明、成功/失败生产运行分别保留来源与状态，缓存命中不是新的执行事实。`npm run verify:lineage` 可运行隔离 HTTP/RAG 验收。详见[血缘实施方案](docs/lineage-evidence-plan.md)和[分层验收及性能报告](docs/lineage-evidence-acceptance.md)。本轮没有安装外部调度/审计采集器，不承诺自动获得所有数据库历史 SQL。
+
 ## 指标口径原始文件
 
 在“数据目录 → 指标中心 → 审核口径”中，管理员可以为单个指标上传正式口径材料。支持 PDF、DOCX、XLSX、PPTX、HTML、Markdown、TXT、SQL、JSON、YAML 和 CSV，单文件最大 20 MiB。系统保留原始二进制文件、提取出的文本、文件哈希、解析器与告警信息，并将它们作为不可变的证据来源关联到指标；同一指标上传相同文件会按 SHA-256 去重。

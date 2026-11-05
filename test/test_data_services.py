@@ -329,4 +329,4 @@ def test_cli_acceptance_works_from_fresh_external_directory(tmp_path):
         env={**os.environ,'PYTHONIOENCODING':'utf-8'},capture_output=True,text=True,encoding='utf-8',timeout=60)
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
-    assert report['passed'] == report['total'] == 27 and report['llm_calls'] == 0
+    assert report['passed'] == report['total'] == 31 and report['llm_calls'] == 0

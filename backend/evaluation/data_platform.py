@@ -10,6 +10,7 @@ from backend.evaluation.environment import evaluation_environment
 def data_platform_environment(directory):
     from backend import auth
     from backend.api import data_services
+    from backend.api import lineage as lineage_api
     from backend.catalog import publications
     from backend.data_services import metrics, production, production_runner, production_sql
     from backend.tools import approvals, approval_graph
@@ -18,7 +19,7 @@ def data_platform_environment(directory):
     from backend.tools.executor import ToolExecutor
     from backend.tools.registry import ToolRegistry
     with evaluation_environment(directory) as factory, ExitStack() as stack:
-        for module in (metrics, production, production_runner, publications, data_services, auth, approvals):
+        for module in (metrics, production, production_runner, publications, data_services, lineage_api, auth, approvals):
             stack.enter_context(patch.object(module, 'db', factory))
         stack.enter_context(patch.object(production_sql, 'DEMO_DB', directory / 'warehouse.db'))
         con = factory()

@@ -132,6 +132,12 @@ def validate(directory, dsn=None):
         check('duplicate key cannot write again', duplicate['data']['run_id'] == first['data']['run_id'] and duplicate['data']['idempotent'])
         rerun = request_and_decide('partition-rerun')
         check('partition rerun succeeds', rerun['status'] == 'success')
+        sources=admin.get('/api/catalog/evidence/sources').json()
+        captured=next((s for s in sources if s['source_kind']=='production_run' and s['metadata'].get('run',{}).get('run_id')==first['data']['run_id']),None)
+        check('actual production has immutable SQL and bound parameters',bool(captured and captured['metadata']['run']['parameters']))
+        candidates=admin.get('/api/catalog/evidence/candidates',params={'source_ref':captured['id']}).json()
+        check('production amount field origin bound to actual schema',any(e['kind']=='column_value' and e['from_column']=='amount' and e['to_column']=='paid_amount' and e['observation']=='run_observed' for e in candidates))
+        check('COUNT star remains rowset influence, not fake column value',any(e['kind']=='column_influence' and e['to_column']=='order_count' and e['context'].get('influence_role')=='row_count' for e in candidates))
         asset = admin.get('/api/catalog/assets/'+job['target_asset_id']).json()
         check('new output remains draft', asset['publish_status'] == 'draft')
         with patch('backend.catalog.vector_index.ensure_catalog_index', return_value=False):
@@ -153,6 +159,9 @@ def validate(directory, dsn=None):
             pg.execute('UPDATE orders SET amount=NULL WHERE order_id=1'); pg.commit(); pg.close()
         failed = request_and_decide('quality-failure')
         check('quality failure is explicit', failed['error']['code'] == 'quality_failed')
+        sources=admin.get('/api/catalog/evidence/sources').json()
+        failures=[s for s in sources if s['source_kind']=='production_run' and s['metadata'].get('run',{}).get('state')=='FAIL']
+        check('failed production never becomes successful field lineage',bool(failures) and all(s['state']['analysis']['candidate_count']==0 for s in failures))
         from backend.tools.sql_tool import run_readonly_sql
         table = '.'.join('"'+part+'"' for part in (job['config']['target_namespace'],job['config']['target_table']) if part)
         rows = run_readonly_sql('SELECT SUM(paid_amount) AS amount,SUM(order_count) AS orders FROM '+table,

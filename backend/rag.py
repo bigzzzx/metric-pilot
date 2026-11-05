@@ -78,6 +78,13 @@ def _relation_evidence(query: str, documents: list[dict], ranked: list[dict], li
         for identifier in item.get("asset_ids", [])
     }
     candidates = [item for item in documents if item.get("kind") == "relation"]
+    # Explicit real physical names outrank broad business synonym families.
+    # This is catalog-driven, so newly reviewed relations need no hardcoded list.
+    explicit_asset_ids = {
+        identifier for item in documents if item.get('kind')=='table' and item.get('physical_name')
+        and re.search(r'(?<![\w])'+re.escape(item['physical_name'])+r'(?![\w])',query,re.IGNORECASE)
+        for identifier in item.get('asset_ids',[])
+    }
     shape_terms = {
         "使用", "回答", "测试", "数仓", "关联", "联表", "连接", "统计", "去重",
         "订单数", "单数", "件数", "数量", "金额", "总额", "合计", "postgresql",
@@ -129,7 +136,8 @@ def _relation_evidence(query: str, documents: list[dict], ranked: list[dict], li
     def combined_edge_score(item: dict) -> float:
         lexical_rank = ranked_positions.get(str(item.get("id")))
         lexical_bonus = 4.0 / lexical_rank if lexical_rank else 0.0
-        return edge_score(item) + lexical_bonus
+        exact_bonus = 20.0 * len(explicit_asset_ids.intersection(item.get('asset_ids',[])))
+        return edge_score(item) + lexical_bonus + exact_bonus
 
     ordered = sorted(
         ((combined_edge_score(item), item) for item in candidates),
