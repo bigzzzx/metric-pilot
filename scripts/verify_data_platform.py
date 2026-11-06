@@ -51,7 +51,7 @@ def prepare_postgres(factory, warehouse, dsn):
     con.commit(); con.close()
 
 
-def validate(directory, dsn=None):
+def validate(directory, dsn=None, runtime_recovery=False):
     import sqlite3
     from cryptography.fernet import Fernet
     from fastapi.testclient import TestClient
@@ -150,6 +150,24 @@ def validate(directory, dsn=None):
         check('materialization data version increments only for real writes', materialized['data_version'] == 2)
         con.close()
         check('data update invalidates existing cache identity', before != dependency_fingerprint(factory))
+        if runtime_recovery:
+            from backend.data_services import production, production_runner, production_sql
+            with patch.object(production_runner,'_publish_artifact',side_effect=RuntimeError('Injected metadata acknowledgement failure')):
+                interrupted=request_and_decide('runtime-recovery')
+            check('committed run reports metadata recovery instead of rollback', interrupted.get('error',{}).get('code')=='metadata_reconciliation_required')
+            record=next(r for r in admin.get('/api/data-services/production/runs').json() if r['request_key']=='runtime-recovery')
+            check('committed interrupted run remains blocking', record['status']=='needs_reconciliation')
+            source=production.verified_source(job['config'],'eval-admin')
+            with production_sql.locked_warehouse(job['config'],source) as physical:
+                receipt=production_sql.read_receipt(physical,job['config'],source,record['id'])
+            check('real warehouse receipt includes committed golden result', receipt is not None and Decimal(json.loads(receipt['result_json'])['amount'])==100)
+            recovered=admin.post('/api/data-services/production/runs/'+record['id']+'/recover')
+            check('real warehouse receipt safely restores metadata', recovered.status_code==200 and recovered.json()['status']=='succeeded')
+            con=factory();version=con.execute('SELECT data_version FROM asset_materializations WHERE asset_id=?',(job['target_asset_id'],)).fetchone()[0];con.close()
+            check('recovery registers only the new actual commit',version==3)
+            check('repeated warehouse recovery is idempotent',admin.post('/api/data-services/production/runs/'+record['id']+'/recover').json()['status']=='succeeded')
+            con=factory();same=con.execute('SELECT data_version FROM asset_materializations WHERE asset_id=?',(job['target_asset_id'],)).fetchone()[0];con.close()
+            check('repeated recovery does not increment data version',same==version)
         if dsn:
             import psycopg
             with psycopg.connect(dsn) as pg:
@@ -161,7 +179,10 @@ def validate(directory, dsn=None):
         check('quality failure is explicit', failed['error']['code'] == 'quality_failed')
         sources=admin.get('/api/catalog/evidence/sources').json()
         failures=[s for s in sources if s['source_kind']=='production_run' and s['metadata'].get('run',{}).get('state')=='FAIL']
-        check('failed production never becomes successful field lineage',bool(failures) and all(s['state']['analysis']['candidate_count']==0 for s in failures))
+        # An interrupted, committed run can retain parsed SQL as FAILED evidence;
+        # that is not successful lineage and must never be published as such.
+        failed_candidates=[e for source in failures for e in admin.get('/api/catalog/evidence/candidates',params={'source_ref':source['id']}).json()]
+        check('failed production never becomes successful field lineage',bool(failures) and all(e['observation']=='run_failed' for e in failed_candidates))
         from backend.tools.sql_tool import run_readonly_sql
         table = '.'.join('"'+part+'"' for part in (job['config']['target_namespace'],job['config']['target_table']) if part)
         rows = run_readonly_sql('SELECT SUM(paid_amount) AS amount,SUM(order_count) AS orders FROM '+table,
@@ -177,6 +198,7 @@ def validate(directory, dsn=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--postgres', action='store_true',help='Requires disposable metric_pilot_acceptance DB and METRIC_PILOT_TEST_PG_DSN')
+    parser.add_argument('--runtime-recovery',action='store_true',help='Also verify committed receipts and metadata-only recovery')
     args = parser.parse_args()
     dsn = os.environ.get('METRIC_PILOT_TEST_PG_DSN') if args.postgres else None
     if args.postgres and not dsn:
@@ -190,7 +212,7 @@ def main():
         core.DEMO_DB = core.DATA_DIR / 'warehouse.db'
         core.db.__defaults__ = (core.PLATFORM_DB,)
         try:
-            result = validate(Path(directory), dsn)
+            result = validate(Path(directory), dsn, runtime_recovery=args.runtime_recovery)
         finally:
             from backend.checkpoint import _connection
             _connection.close()

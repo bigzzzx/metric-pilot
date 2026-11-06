@@ -199,7 +199,9 @@ def test_failed_wiki_index_job_can_be_retried(isolated,monkeypatch):
     published=wiki.publish('metric-demo-paid','eval-analyst',review)
     from backend.catalog import vector_index
     monkeypatch.setattr(vector_index,'ensure_catalog_index',lambda: False)
-    assert wiki.run_index_job(published['index_job_id'])['status']=='failed'
+    # A transient error remains durable and retryable until its bounded budget is exhausted.
+    attempt=wiki.run_index_job(published['index_job_id'])
+    assert attempt['status']=='pending' and attempt['attempts']==1 and attempt['next_attempt_at']>0
     assert wiki.retry_index('metric-demo-paid','eval-analyst')['status']=='pending'
     monkeypatch.setattr(vector_index,'ensure_catalog_index',lambda: True)
     assert wiki.run_index_job(published['index_job_id'])['status']=='completed'

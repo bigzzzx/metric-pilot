@@ -412,46 +412,8 @@ def publish(metric_id, user_id, payload):
 
 def run_index_job(job_id: str) -> dict:
     """Refresh the derived Milvus projection after the publication transaction."""
-    con = db()
-    try:
-        job = con.execute("SELECT * FROM metric_wiki_index_jobs WHERE id=?", (job_id,)).fetchone()
-        if not job:
-            return {"id": job_id, "status": "missing"}
-        if job["status"] == "completed":
-            return {"id": job_id, "status": "completed"}
-        con.execute(
-            "UPDATE metric_wiki_index_jobs SET status='running',error='' WHERE id=?",
-            (job_id,),
-        )
-        con.commit()
-    finally:
-        con.close()
-    try:
-        from backend.catalog.vector_index import ensure_catalog_index
-        if not ensure_catalog_index():
-            raise RuntimeError("catalog vector index is unavailable")
-    except Exception as exc:
-        con = db()
-        try:
-            con.execute(
-                "UPDATE metric_wiki_index_jobs SET status='failed',error=? WHERE id=?",
-                (str(exc)[:1000], job_id),
-            )
-            con.commit()
-        finally:
-            con.close()
-        return {"id": job_id, "status": "failed", "error": str(exc)}
-    con = db()
-    try:
-        con.execute(
-            """UPDATE metric_wiki_index_jobs
-               SET status='completed',error='',completed_at=CURRENT_TIMESTAMP WHERE id=?""",
-            (job_id,),
-        )
-        con.commit()
-    finally:
-        con.close()
-    return {"id": job_id, "status": "completed"}
+    from backend.index_worker import run_job
+    return run_job('wiki',job_id,connection_factory=db)
 
 
 def retry_index(metric_id: str, user_id: str) -> dict:
@@ -466,11 +428,10 @@ def retry_index(metric_id: str, user_id: str) -> dict:
         ).fetchone()
         if not job:
             raise HTTPException(404, "该指标没有可重试的 Wiki 索引任务。")
-        if job["status"] != "completed":
-            con.execute(
-                "UPDATE metric_wiki_index_jobs SET status='pending',error='' WHERE id=?",
-                (job["id"],),
-            )
+        from backend.index_worker import reset_job
+        reset = reset_job(con,'wiki',job['id'])
+        if reset.get('retry_blocked'):
+            raise HTTPException(409,'索引任务仍在执行，请稍后重试。')
         con.execute(
             """INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json)
                VALUES (?,'metric_wiki_index_retry','metric',?,?)""",

@@ -2,6 +2,7 @@
 import json
 import hashlib
 from pathlib import Path
+from typing import Literal
 from fastapi import APIRouter, Depends, BackgroundTasks, File, Form, UploadFile, HTTPException, Query
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
@@ -112,10 +113,16 @@ def withdraw(identifier:str,payload:VersionInput,background_tasks:BackgroundTask
 
 @router.post('/evidence/index/retry')
 def retry_index(background_tasks:BackgroundTasks,user:dict=Depends(require_user)):
+    from backend.index_worker import reset_job
     con = db()
     try:
+        con.execute('BEGIN IMMEDIATE')
         service.require_admin(con,user['id'])
-        ids = [r['id'] for r in con.execute("SELECT id FROM lineage_index_jobs WHERE status='pending' ORDER BY created_at LIMIT 20")]
+        ids = [r['id'] for r in con.execute("SELECT id FROM lineage_index_jobs WHERE status IN ('pending','failed') ORDER BY created_at LIMIT 20")]
+        for identifier in ids: reset_job(con,'lineage',identifier)
+        con.execute('''INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json)
+            VALUES (?,'index_retry','lineage','batch',?)''',(user['id'],json.dumps({'job_ids':ids})))
+        con.commit()
     finally: con.close()
     for identifier in ids: background_tasks.add_task(service.run_index_job,identifier)
     return dict(pending=ids)
@@ -123,12 +130,37 @@ def retry_index(background_tasks:BackgroundTasks,user:dict=Depends(require_user)
 
 @router.get('/evidence/index/jobs')
 def index_jobs(user:dict=Depends(require_user)):
+    from backend.index_worker import TABLES,job_health
     con=db()
     try:
         service.require_admin(con,user['id'])
         return dict(jobs=[dict(r) for r in con.execute('SELECT * FROM lineage_index_jobs ORDER BY created_at DESC,id DESC LIMIT 20')],
-            total_pending=con.execute("SELECT COUNT(*) FROM lineage_index_jobs WHERE status='pending'").fetchone()[0])
+            total_pending=con.execute("SELECT COUNT(*) FROM lineage_index_jobs WHERE status='pending'").fetchone()[0],
+            health=job_health(db),
+            all_jobs=sorted([dict(r,kind=kind) for kind,table in TABLES.items()
+                for r in con.execute(f'SELECT * FROM {table} ORDER BY created_at DESC,id DESC LIMIT 20')],
+                key=lambda j:(j['created_at'],j['id']),reverse=True)[:50])
     finally:con.close()
+
+
+@router.post('/evidence/index/retry/{kind}/{identifier}')
+def retry_one_index(kind:Literal['lineage','wiki','catalog'],identifier:str,
+                    background_tasks:BackgroundTasks,user:dict=Depends(require_user)):
+    from backend.index_worker import reset_job,run_job
+    con=db()
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        service.require_admin(con,user['id'])
+        result=reset_job(con,kind,identifier)
+        if result['status']=='missing':raise HTTPException(404,'索引任务不存在。')
+        if result.get('retry_blocked'):raise HTTPException(409,'索引任务仍在执行，请稍后重试。')
+        con.execute('''INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json)
+            VALUES (?,'index_retry','index_job',?,?)''',(user['id'],identifier,json.dumps({'kind':kind})))
+        con.commit()
+    finally:con.close()
+    if result['status']!='completed':
+        background_tasks.add_task(run_job,kind,identifier,connection_factory=db)
+    return result
 
 
 @router.get('/assets/{asset_id}/field-lineage')

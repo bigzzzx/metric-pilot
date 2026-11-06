@@ -28,6 +28,30 @@ def init_schema(connection_factory=None):
           asset_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,data_version INTEGER NOT NULL DEFAULT 0,
           data_updated_at TEXT NOT NULL,range_start TEXT NOT NULL,range_end TEXT NOT NULL);
         ''')
+        columns = {row['name'] for row in con.execute('PRAGMA table_info(production_runs)')}
+        for name, definition in {
+            'snapshot_json': "TEXT NOT NULL DEFAULT '{}'",
+            'snapshot_hash': "TEXT NOT NULL DEFAULT ''",
+            'execution_token': "TEXT NOT NULL DEFAULT ''",
+            'heartbeat_at': 'TEXT',
+            'lease_expires_at': 'TEXT',
+        }.items():
+            if name not in columns:
+                con.execute(f'ALTER TABLE production_runs ADD COLUMN {name} {definition}')
+        con.executescript('''
+        CREATE TRIGGER IF NOT EXISTS production_execution_snapshot_immutable
+          BEFORE UPDATE OF snapshot_json,snapshot_hash ON production_runs
+          WHEN OLD.snapshot_json != '{}' AND
+            (NEW.snapshot_json != OLD.snapshot_json OR NEW.snapshot_hash != OLD.snapshot_hash)
+          BEGIN SELECT RAISE(ABORT,'Production execution snapshot is immutable'); END;
+        ''')
+        index = con.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_one_active_production_job'").fetchone()
+        if index is None or 'recovery_required' not in index['sql']:
+            # Do not expose a DROP/CREATE gap to another application process.
+            con.execute('BEGIN IMMEDIATE')
+            con.execute('DROP INDEX IF EXISTS idx_one_active_production_job')
+            con.execute("""CREATE UNIQUE INDEX idx_one_active_production_job ON production_runs(job_id)
+                WHERE status IN ('running','needs_reconciliation','recovery_required','unknown')""")
         con.commit()
     finally:
         con.close()

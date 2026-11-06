@@ -16,3 +16,6 @@
 .lineage-evidence-panel .evidence-endpoint small,.field-lineage-panel .evidence-endpoint small{display:block;color:#718096;font-size:10px;line-height:1.5}
 .lineage-evidence-panel .evidence-endpoint strong,.field-lineage-panel .evidence-endpoint strong{display:block;color:#25364a;font-size:13px;line-height:1.6;font-weight:600;overflow-wrap:anywhere}
 .lineage-evidence-panel .evidence-note,.field-lineage-panel .evidence-note,.lineage-evidence-panel .evidence-heading p,.field-lineage-panel .evidence-heading p{color:#718096;font-size:12px;line-height:1.7}
+.lineage-evidence-panel .lineage-endpoint{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.lineage-evidence-panel .lineage-endpoint strong{max-width:100%;overflow-wrap:anywhere}
+.lineage-evidence-panel aside.evidence-note{min-width:0;overflow-wrap:anywhere}

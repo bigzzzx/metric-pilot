@@ -11,6 +11,8 @@
     "verify:platform": ".\\.venv\\Scripts\\python.exe scripts/verify_data_platform.py",
     "verify:platform:postgres": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-data-platform-postgres.ps1",
     "verify:lineage": ".\\.venv\\Scripts\\python.exe scripts/verify_lineage.py",
+    "verify:runtime": ".\\.venv\\Scripts\\python.exe scripts/verify_runtime_reliability.py",
+    "verify:runtime:milvus": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-runtime-milvus.ps1",
     "evaluate:postgres": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py --llm",
     "evaluate:postgres:stability": ".\\.venv\\Scripts\\python.exe scripts/verify_postgresql_queries.py --stability --output .data/evals/postgresql-stability-latest.json",
     "build": "vite build",

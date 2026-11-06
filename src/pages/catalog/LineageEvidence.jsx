@@ -94,11 +94,22 @@ export default function LineageEvidence({ assets=[], isAdmin=false }) {
     setSourceFilter(result.id);setSource(await request(base+'/sources/'+enc(result.id)));return {message:`证据已保存 · ${lineageLabel(result.state.analysis.status)} · ${result.state.analysis.candidate_count||0} 个候选；未执行导入 SQL。`};
   });};
   const visible = candidates.filter(c=>(!status || c.effective_status===status)&&(!kind||c.kind===kind)&&(!sourceFilter || c.source_ref===sourceFilter));
+  const indexHealth = indexState?.health || {pending:indexState?.total_pending || 0,running:0,failed:0};
   useEffect(()=>setVisibleLimit(50),[status,kind,sourceFilter]);
   return <section className="lineage-evidence-panel">
     <div className="evidence-heading"><div><span className="asset-eyebrow">EVIDENCE & LINEAGE</span><h2>关联与字段血缘</h2><p>证据可追溯，语义需审核。技术校验、成功运行与人工批准各自独立。</p></div><button disabled={busy} onClick={()=>run(reload)}>刷新证据</button></div>
     {error && <p className="catalog-error" role="alert">{error}</p>}{message && <p className="evidence-success" role="status">{message}</p>}
-    {isAdmin&&indexState?.total_pending>0&&<p className="evidence-note">{indexState.total_pending} 个索引更新待完成。结构化与词法检索已按当前审核状态生效；向量服务恢复后可重试，撤回/失效证据不会被旧向量重新放行。</p>}
+    {isAdmin&&(indexHealth.pending+indexHealth.running+indexHealth.failed>0)&&<aside className="evidence-note" role="status">
+      {indexHealth.pending} 个等待重试，{indexHealth.running} 个更新中，{indexHealth.failed} 个达到重试上限。
+      {indexHealth.worker_enabled===false?'当前未启用向量后台消费，任务已持久保存，启用后继续处理。':'后台自动重试临时故障；达到上限后需管理员重试。'}
+      结构化与词法检索已按当前审核状态生效，旧向量不能绕过撤回或权限。
+      <details><summary>查看最近索引任务</summary><ul>{(indexState.all_jobs||indexState.jobs||[]).map(job=><li key={job.id}>
+        {job.kind || 'lineage'} · {job.status==='completed'?'已完成':job.status==='failed'?'重试上限':job.status==='running'?'更新中':'等待重试'} · 尝试 {job.attempts||0} 次
+        {job.next_attempt_at>0&&job.status==='pending'?` · 下次 ${new Date(job.next_attempt_at*1000).toLocaleString()}`:''}
+        {job.error?' · 向量索引服务暂不可用':''}
+        {job.status==='failed'&&<button type="button" disabled={busy} onClick={()=>run(()=>request(`${base}/index/retry/${enc(job.kind||'lineage')}/${enc(job.id)}`,{}))}>重试该索引任务</button>}
+      </li>)}</ul></details>
+    </aside>}
     {isAdmin && <details className="evidence-import"><summary>导入 SQL / ETL 定义 / 业务文档</summary><form onSubmit={submit}>
       <div className="evidence-form-grid"><label>证据类型<select aria-label="证据类型" value={form.source_kind} onChange={e=>setForm({...form,source_kind:e.target.value})}>{['sql_import','etl_definition','business_document'].map(s=><option key={s} value={s}>{lineageLabel(s)}</option>)}</select></label><label>证据标题<input required aria-label="证据标题" maxLength={200} value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label>
       <label>适用数据源<select aria-label="证据数据源" value={form.source_id} onChange={e=>setForm({...form,source_id:e.target.value,asset_ids:[]})}><option value="">所有已授权数据源（同名可能歧义）</option>{sourceIds.map(s=><option key={s}>{s}</option>)}</select></label><label>来源版本<input value={form.source_version} onChange={e=>setForm({...form,source_version:e.target.value})} placeholder="不填使用内容 SHA-256"/></label><label>来源 URI<input value={form.source_uri} onChange={e=>setForm({...form,source_uri:e.target.value})} placeholder="仅保存引用，不自动访问"/></label></div>

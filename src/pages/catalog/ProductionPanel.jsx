@@ -3,7 +3,7 @@ import ToolApprovalCard from '../../components/chat/ToolApprovalCard.jsx';
 import { serviceRequest } from './dataServiceApi.js';
 import './DataServices.css';
 
-const statusLabels = { running:'运行中', succeeded:'成功', failed:'失败', needs_reconciliation:'待核对元数据' };
+const statusLabels = { running:'运行中', succeeded:'成功', failed:'失败', needs_reconciliation:'待核对元数据', unknown:'结果待确认', recovery_required:'待恢复核对', interrupted:'已中断，未提交' };
 const fieldLabels = { time_column:'订单日期', amount_column:'订单金额', status_column:'订单状态', order_id_column:'订单唯一标识' };
 const candidates = { time_column:['order_date','order_time','created_at'], amount_column:['amount','order_amount','paid_amount'], status_column:['status','order_status'], order_id_column:['order_id','id'] };
 
@@ -67,9 +67,14 @@ export default function ProductionPanel({ assets = [], isAdmin, onCatalogChanged
     try { await serviceRequest(`/production/jobs/${job.id}`, { method:'PATCH', body:JSON.stringify({ enabled:!job.enabled }) }); await refresh(); }
     catch (err) { setError(err.message); }
   };
-  const reconcile = async run => {
-    try { await serviceRequest(`/production/runs/${run.id}/reconcile`, { method:'POST' }); await resolved(); }
-    catch (err) { setError(err.message); }
+  const recover = async run => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await serviceRequest(`/production/runs/${run.id}/recover`, { method:'POST' });
+      await refresh(); await onCatalogChanged?.();
+      if (result.status === 'unknown') setError(result.message || '提交状态仍无法确认，任务保持阻塞，未重试写入。');
+      else setNotice(result.message || '已核对提交凭证；未重新执行业务数据写入。');
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   return <section className="data-service-panel">
     <div className="service-intro"><div><span className="service-eyebrow">数据生产</span><h2>订单明细 → 已支付日汇总</h2><p>选择已登记任务，按日期区间重算。每次运行需要批准，首次生成的资产需审核后才能查询。</p></div><button className="outline-button" onClick={() => refresh().catch(err => setError(err.message))}>刷新记录</button></div>
@@ -87,7 +92,7 @@ export default function ProductionPanel({ assets = [], isAdmin, onCatalogChanged
     {pending.map(approval => <ToolApprovalCard key={approval.approval_id || approval.id} approval={{ ...approval, tool_name:'数据生产任务' }} onResolved={resolved} />)}
     <h3>运行记录</h3>{!runs.length && <p className="service-empty">批准后开始执行，运行步骤和结果会保存在这里。</p>}
     <div className="production-runs">{runs.map(run => <article key={run.id}><div className="service-result-heading"><strong>{jobs.find(job => job.id === run.job_id)?.name || '生产任务'}</strong><span className={`production-status ${run.status}`}>{statusLabels[run.status] || run.status}</span></div><p>{run.start_date} 至 {run.end_date}（结束日不含） · {run.started_at}</p>{run.result?.days !== undefined && <p>{run.result.days} 个日期 · {run.result.orders} 笔订单 · 金额 {run.result.amount}</p>}{run.error_message && <p className="service-error">{run.error_message}</p>}
-      {isAdmin && run.status === 'needs_reconciliation' && <button className="outline-button" onClick={() => reconcile(run)}>恢复元数据登记</button>}
+      {isAdmin && run.recovery_required && <div className="service-actions"><button className="outline-button" disabled={busy} onClick={() => recover(run)}>核对中断并恢复</button><small>仅核对仓库提交凭证和补登元数据，不重放写入；状态不明时仍会阻止新运行。</small></div>}
       <details><summary>查看步骤和执行记录</summary><ol>{run.steps.map((step, index) => <li key={index}>{step.name} · {statusLabels[step.status] || step.status}{step.code && ` · ${step.code}`}</li>)}</ol><p className="service-version">运行 ID：{run.id}</p>{run.result.sql_template && <pre>{run.result.sql_template}</pre>}</details></article>)}</div>
   </section>;
 }

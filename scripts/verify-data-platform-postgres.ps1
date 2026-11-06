@@ -1,7 +1,8 @@
 param(
     [string]$Server = $env:DATA_AGENT_SSH_SERVER,
     [string]$KeyPath = $env:DATA_AGENT_SSH_KEY_PATH,
-    [ValidateRange(20000, 40000)][int]$Port = 25433
+    [ValidateRange(20000, 40000)][int]$Port = 25433,
+    [switch]$RuntimeRecovery
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
@@ -47,7 +48,9 @@ try {
     if ($taskTunnel.HasExited) { throw 'Acceptance SSH tunnel did not start.' }
     $env:METRIC_PILOT_TEST_PG_DSN = "host=127.0.0.1 port=$Port dbname=metric_pilot_acceptance user=mp_owner password=$taskPassword"
     $env:PYTHONIOENCODING = 'utf-8'
-    & (Join-Path $taskRoot '.venv\Scripts\python.exe') (Join-Path $PSScriptRoot 'verify_data_platform.py') --postgres
+    $taskVerifyArgs=@('--postgres')
+    if($RuntimeRecovery) { $taskVerifyArgs+='--runtime-recovery' }
+    & (Join-Path $taskRoot '.venv\Scripts\python.exe') (Join-Path $PSScriptRoot 'verify_data_platform.py') @taskVerifyArgs
     if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL data platform acceptance failed.' }
 } finally {
     $env:METRIC_PILOT_TEST_PG_DSN = $taskPreviousDsn

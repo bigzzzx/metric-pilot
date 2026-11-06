@@ -345,20 +345,8 @@ def change_source_status(source_ref,payload,user_id,*,connection_factory=None):
 
 
 def run_index_job(job_id,*,connection_factory=None):
-    from backend.catalog.vector_index import ensure_catalog_index
-    try:
-        success = ensure_catalog_index()
-        status,error = ('completed',None) if success else ('pending','vector_index_unavailable')
-    except Exception:
-        status,error = 'pending','vector_index_unavailable'
-    con = (connection_factory or db)()
-    try:
-        con.execute('UPDATE lineage_index_jobs SET status=?,error=?,completed_at=? WHERE id=?',
-            (status,error,datetime.now(UTC).isoformat() if status=='completed' else None,job_id))
-        con.commit()
-    finally:
-        con.close()
-    return dict(id=job_id,status=status,error=error)
+    from backend.index_worker import run_job
+    return run_job('lineage',job_id,connection_factory=connection_factory or db)
 
 
 def reanalyze(source_ref,user_id,*,connection_factory=None):
