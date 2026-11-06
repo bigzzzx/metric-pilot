@@ -77,3 +77,9 @@ def run_detail(run_id: str, user: dict = Depends(require_user)):
 def reconcile(run_id: str, user: dict = Depends(require_user)):
     from backend.data_services.production_runner import reconcile_run
     return reconcile_run(run_id, user['id'])
+
+
+@router.post('/production/runs/{run_id}/recover')
+def recover(run_id: str, user: dict = Depends(require_user)):
+    from backend.data_services.production_runner import recover_run
+    return recover_run(run_id,user['id'])

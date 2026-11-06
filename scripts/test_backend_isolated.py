@@ -24,6 +24,9 @@ def main():
         os.environ["EMBEDDING_BACKEND"] = "hash"
         os.environ["RERANK_BACKEND"] = "none"
         os.environ["VECTOR_STORE_BACKEND"] = "sqlite"
+        # Worker lifecycle is exercised explicitly with isolated factories.
+        os.environ["CATALOG_INDEX_WORKER_ENABLED"] = "0"
+        os.environ["PRODUCTION_RECOVERY_MONITOR_ENABLED"] = "0"
         os.environ["APP_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
         os.environ.pop("DEEPSEEK_API_KEY", None)
         from backend.evaluation.fixtures import create_warehouse
@@ -36,6 +39,12 @@ def main():
         finally:
             from backend.checkpoint import _connection
             _connection.close()
+            # A closed append-mode FileHandler can reopen on a late background
+            # log call. Detach owned handlers BEFORE closing/removing temp files.
+            app_logger = logging.getLogger('data_agent')
+            for handler in list(app_logger.handlers):
+                app_logger.removeHandler(handler)
+                handler.close()
             logging.shutdown()
 
 

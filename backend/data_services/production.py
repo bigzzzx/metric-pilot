@@ -202,6 +202,12 @@ def get_run(run_id, user_id):
 
 def _run_row(row):
     item = dict(row)
+    # Execution credentials/fencing tokens and private snapshots are never API data.
+    for key in ('snapshot_json', 'snapshot_hash', 'execution_token'):
+        item.pop(key, None)
     item['steps'] = json.loads(item.pop('steps_json'))
     item['result'] = json.loads(item.pop('result_json'))
+    from datetime import UTC, datetime
+    item['recovery_required'] = item['status'] in {'needs_reconciliation','recovery_required','unknown'} or (
+        item['status']=='running' and (not item.get('lease_expires_at') or item['lease_expires_at']<=datetime.now(UTC).isoformat()))
     return item

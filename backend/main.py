@@ -169,6 +169,8 @@ def init_storage(connection_factory=None):
     init_data_services(connection_factory)
     from backend.lineage.storage import init_schema as init_lineage
     init_lineage(connection_factory)
+    from backend.index_worker import init_schema as init_index_worker
+    init_index_worker(connection_factory)
     attachment_repository.init_schema(connection_factory)
     from backend.visualization.node import init_bindings
     init_bindings(connection_factory)
@@ -236,7 +238,17 @@ async def lifespan(_app: FastAPI):
     init_conversation_storage()
     backfill_explicit_memories_once(db)
     register_mcp_tools(initialized_registry())
-    yield
+    from backend.index_worker import start_worker
+    from backend.runtime_recovery_monitor import start_monitor
+    worker = start_worker(db)
+    monitor = start_monitor(db)
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop(timeout=2)
+        if monitor is not None:
+            monitor.stop(timeout=2)
 
 
 app = FastAPI(title="Local Data Agent Platform", lifespan=lifespan)

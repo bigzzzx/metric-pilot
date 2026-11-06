@@ -49,6 +49,8 @@ def init_schema(connection_factory=None):
           id TEXT PRIMARY KEY,user_id TEXT NOT NULL,source_id TEXT,sql_text TEXT NOT NULL,
           origin TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         ''')
+        from backend.index_worker import migrate
+        migrate(con)
         con.commit()
     finally:
         con.close()

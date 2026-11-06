@@ -32,10 +32,13 @@ jobs:
         run: python scripts/test_backend_isolated.py
 
       - name: Run platform HTTP and SQL acceptance
-        run: python scripts/verify_data_platform.py
+        run: python scripts/verify_data_platform.py --runtime-recovery
 
       - name: Run lineage HTTP and RAG acceptance
         run: python scripts/verify_lineage.py
+
+      - name: Run runtime recovery and index retry acceptance
+        run: python scripts/verify_runtime_reliability.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

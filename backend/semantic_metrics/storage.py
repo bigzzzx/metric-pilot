@@ -43,6 +43,8 @@ def migrate(con):
         id TEXT PRIMARY KEY, metric_id TEXT NOT NULL, metric_version INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT)''')
+    from backend.index_worker import migrate
+    migrate(con)
     # Separate, explicitly named synthetic definitions never overwrite existing metrics.
     if not con.execute("SELECT 1 FROM catalog_assets WHERE id='asset-orders'").fetchone():
         return

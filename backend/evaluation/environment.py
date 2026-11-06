@@ -20,6 +20,8 @@ def evaluation_environment(directory):
     from backend.query_quality import schema_lookup
     from backend.semantic_metrics import repository as metric_repository, wiki as metric_wiki
     from backend.lineage import service as lineage_service, documents, validation, capture, events, projection
+    from backend import index_worker
+    from backend.catalog import vector_index
     from backend.tools.models import ToolResult, ToolStatus
 
     platform, warehouse = directory / "platform.db", directory / "warehouse.db"
@@ -75,7 +77,7 @@ def evaluation_environment(directory):
 
     with ExitStack() as stack:
         for module in (rag_documents, retrieval, service, quality_context, sql_tool, schema_lookup, metric_repository, metric_wiki,
-                       lineage_service,documents,validation,capture,events,projection):
+                       lineage_service,documents,validation,capture,events,projection,index_worker,vector_index):
             stack.enter_context(patch.object(module, "db", factory))
         stack.enter_context(patch.object(lineage_service,'SOURCE_ROOT',directory/'lineage-evidence'))
         stack.enter_context(patch.object(agent, "tool_executor", FixtureTools()))

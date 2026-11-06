@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from functools import wraps
 from typing import Any
 
 from backend.catalog.rag_documents import authorized_catalog_documents, published_catalog_documents
-from backend.core import ROOT
+from backend.core import ROOT, db
 from backend.observability import log_event
 from backend.retrieval_models import EMBEDDING_DIMENSIONS, RetrievalModelError, embed_texts
 from backend.vector_store import VectorStoreError, knowledge_collection_name, milvus_client, using_milvus
@@ -123,6 +124,22 @@ def _remove_legacy_shared_metadata(client) -> int:
         raise VectorStoreError(f"Legacy catalog-vector cleanup failed: {exc}") from exc
 
 
+def _serialized_writer(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        if not using_milvus():
+            return False
+        from backend.index_worker import writer_lock
+        try:
+            with writer_lock(db):
+                return function(*args, **kwargs)
+        except Exception as exc:
+            log_event('catalog.rag_writer_unavailable',error_type=type(exc).__name__)
+            return False
+    return guarded
+
+
+@_serialized_writer
 def ensure_catalog_index() -> bool:
     """Idempotently mirror published metadata into the isolated collection."""
     global _indexed_version
@@ -130,8 +147,8 @@ def ensure_catalog_index() -> bool:
         return False
     documents = published_catalog_documents()
     version = _version(documents)
-    if _indexed_version == version:
-        return True
+    # Read the durable marker under the writer lock. An in-process cache can be
+    # stale after another process wrote an index or the configured target changed.
     try:
         client = milvus_client()
         collection = _collection(client)
@@ -165,6 +182,7 @@ def ensure_catalog_index() -> bool:
         return False
 
 
+@_serialized_writer
 def refresh_catalog_assets(asset_ids: set[str]) -> bool:
     """Incrementally re-embed documents scoped to changed catalog assets."""
 
@@ -208,12 +226,16 @@ def refresh_catalog_assets(asset_ids: set[str]) -> bool:
                 collection_name=collection,
                 filter=f"id in [{','.join(json.dumps(item) for item in stale)}]",
             )
+        # A scoped refresh cannot prove that all other scopes already match the
+        # current snapshot. Do not publish a full-index marker until the durable
+        # outbox worker has compared/refreshed the complete current projection.
+        partial_version = 'partial:' + version[:56]
         client.upsert(collection_name=collection, data=[{
             "id": "catalog-index-state", "entity_type": "index_state", "asset_scope_json": "[]",
-            "domain_id": "", "version": version, "title": "Catalog metadata index state",
-            "content": version, "vector": [0.0] * EMBEDDING_DIMENSIONS,
+            "domain_id": "", "version": partial_version, "title": "Catalog metadata index state",
+            "content": partial_version, "vector": [0.0] * EMBEDDING_DIMENSIONS,
         }])
-        _indexed_version = version
+        _indexed_version = ''
         log_event(
             "catalog.rag_incremental_refresh", collection=collection, assets=len(scopes),
             upserted=len(rows), deleted=len(stale),

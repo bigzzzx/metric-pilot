@@ -160,7 +160,9 @@ def _publish_in_transaction(con, asset_id: str, actor_id: str, expected_version:
         "INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json) VALUES (?,?,?,?,?)",
         (actor_id,"publish","asset",asset_id,json.dumps({"batch_id": batch_id} if batch_id else {}, ensure_ascii=False)),
     )
-    return {"asset_id": asset_id, "status": "published", "version": next_version}
+    from backend.index_worker import enqueue_catalog
+    index_job_id = enqueue_catalog(con)
+    return {"asset_id": asset_id, "status": "published", "version": next_version,"index_job_id":index_job_id}
 
 
 def publish_asset(asset_id: str, actor_id: str, expected_version: int | None = None) -> dict[str, Any]:
@@ -183,7 +185,7 @@ def publish_asset(asset_id: str, actor_id: str, expected_version: int | None = N
     indexed = ensure_catalog_index()
     return {**result,
         "rag_indexed": indexed,
-        "message": "资产已发布并进入 RAG。" if indexed else "资产已发布；向量索引暂不可用，将在下次检索时重试。",
+        "message": "资产已发布并进入 RAG。" if indexed else "资产已发布；向量索引暂不可用，后台将自动重试。",
     }
 
 

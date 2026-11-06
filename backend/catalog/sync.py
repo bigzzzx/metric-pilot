@@ -533,6 +533,9 @@ def decide_change(
                 "source_id": source_id, "change_type": change["change_type"], "reason": reason.strip(),
             })),
         )
+        if decision == 'approve' and refresh_required:
+            from backend.index_worker import enqueue_catalog
+            enqueue_catalog(con)
         con.commit()
     except Exception:
         con.rollback()
@@ -678,6 +681,9 @@ def rollback_change(source_id: str, change_id: str, actor_id: str) -> dict[str, 
                 "source_id": source_id, "change_type": change_type,
             })),
         )
+        if refresh_required:
+            from backend.index_worker import enqueue_catalog
+            enqueue_catalog(con)
         con.commit()
     except Exception:
         con.rollback()
