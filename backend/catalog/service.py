@@ -148,7 +148,12 @@ def sample_asset(user_id: str, asset_id: str, limit: int = 5) -> dict[str, Any]:
     limit = max(1,min(int(limit),5)); con = db(); asset = con.execute("SELECT * FROM catalog_assets WHERE id=? AND publish_status='published'", (asset_id,)).fetchone()
     source_config = con.execute("SELECT * FROM data_sources WHERE id=? AND enabled=1", (asset['source_id'],)).fetchone() if asset else None
     if not asset or not source_config or not can_access(user_id,QUERY_DATA,asset_id=asset_id,connection=con): con.close(); raise LookupError("Sample data not authorized or source unavailable")
-    columns = _rows(con.execute("SELECT physical_name,sensitivity,masking_strategy FROM catalog_columns WHERE asset_id=? ORDER BY ordinal", (asset_id,))); con.close()
+    try:
+        from backend.lineage.views import query_view_definitions
+        definitions = query_view_definitions(con, user_id, [asset]) if source_config['kind']=='postgresql' else {}
+        columns = _rows(con.execute("SELECT physical_name,sensitivity,masking_strategy FROM catalog_columns WHERE asset_id=? ORDER BY ordinal", (asset_id,)))
+    finally:
+        con.close()
     names = [column["physical_name"] for column in columns]
     if not names: return {"rows": [],"columns": [],"limit": limit,"masked": True}
     quoted = ", ".join('"' + name.replace('"','""') + '"' for name in names); physical = '"' + asset["physical_name"].replace('"','""') + '"'
@@ -165,7 +170,9 @@ def sample_asset(user_id: str, asset_id: str, limit: int = 5) -> dict[str, Any]:
                 projected.append("'***' AS " + name)
             else:
                 projected.append(name)
-        rows = execute_postgres(source_config, f"SELECT {', '.join(projected)} FROM {namespace}.{physical}", limit)
+        statement = f"SELECT {', '.join(projected)} FROM {namespace}.{physical}"
+        rows = (execute_postgres(source_config, statement, limit, view_definitions=definitions)
+                if definitions else execute_postgres(source_config, statement, limit))
     elif source_config['kind'] == 'local-sqlite':
         source = db(DEMO_DB)
         try: rows = [dict(row) for row in source.execute(f"SELECT {quoted} FROM {physical} LIMIT ?", (limit,)).fetchall()]

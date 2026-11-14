@@ -52,13 +52,21 @@ def normalize_table(item: dict[str, Any]) -> dict[str, Any]:
     primary_key = [str(value).strip() for value in item.get("primary_key", []) if str(value).strip()]
     if not primary_key:
         primary_key = [column["name"] for column in columns if column["is_primary_key"]]
-    return {
+    result = {
         "namespace": namespace,
         "name": name,
         "description": str(item.get("description") or "").strip(),
         "primary_key": primary_key,
         "columns": columns,
     }
+    if item.get('asset_type') in {'view', 'materialized_view'}:
+        definition = item.get('view_definition') or ''
+        state = item.get('view_definition_status', 'available' if definition else 'unavailable')
+        if len(definition) > 100000:
+            definition, state = '', 'too_large'
+        result.update(asset_type=item['asset_type'], view_definition_hash=_hash(definition) if definition else '',
+                      view_definition_status=state)
+    return result
 
 
 def normalize_relationships(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -100,10 +108,13 @@ def _catalog_table_payload(con, asset) -> dict[str, Any]:
         "SELECT * FROM catalog_columns WHERE asset_id=? ORDER BY ordinal,physical_name", (asset["id"],)
     )]
     primary_key = [value.strip() for value in str(asset["primary_key"] or "").split(",") if value.strip()]
-    return {
+    payload = {
         "namespace": asset["namespace"] or "", "name": asset["physical_name"],
         "description": asset["description"] or "", "primary_key": primary_key, "columns": columns,
     }
+    if asset['asset_type'] in {'view', 'materialized_view'}:
+        payload['asset_type'] = asset['asset_type']
+    return payload
 
 
 def _catalog_relationship_payload(con, source_id: str) -> list[dict[str, Any]]:
@@ -160,6 +171,9 @@ def _table_summary(before: dict[str, Any] | None, after: dict[str, Any] | None) 
           if before_columns[name]["type"] != after_columns[name]["type"]],
         "primary_key_changed": (before or {}).get("primary_key") != (after or {}).get("primary_key"),
         "comment_changed": (before or {}).get("description") != (after or {}).get("description"),
+        "asset_type": (after or before or {}).get('asset_type', 'table'),
+        "view_definition_changed": ((before or {}).get('view_definition_hash'), (before or {}).get('view_definition_status'))
+        != ((after or {}).get('view_definition_hash'), (after or {}).get('view_definition_status')),
     }
 
 
@@ -189,23 +203,44 @@ def _record_pending(
     return True
 
 
-def record_discovery(source_id: str, discovery: dict[str, Any], actor_id: str) -> dict[str, Any]:
+def record_discovery(source_id: str, discovery: dict[str, Any], actor_id: str, *, connection_factory=None,
+                     expected_source=None, expected_version=None, automatic=False, lease_token=None) -> dict[str, Any]:
     """Persist an immutable discovery snapshot and create reviewable diffs."""
 
-    require_catalog_admin(actor_id)
+    if not automatic:
+        require_catalog_admin(actor_id)
     normalized = normalize_discovery(discovery)
     run_id = str(uuid.uuid4())
-    snapshot_hash = _hash(normalized)
-    con = db()
+    con = (connection_factory or db)()
     try:
         con.execute("BEGIN IMMEDIATE")
-        if not con.execute("SELECT 1 FROM data_sources WHERE id=?", (source_id,)).fetchone():
+        source = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone()
+        if not source:
             raise LookupError("Data source not found")
+        if expected_source is not None and any(source[key] != value for key, value in expected_source.items()):
+            raise HTTPException(409, '采集期间数据源配置已变化，请重新采集。')
+        if automatic and (not source['enabled'] or source['kind'] != 'postgresql' or not source['auto_lineage_interval_minutes']):
+            raise HTTPException(409, '此数据源未启用自动采集。')
+        if automatic and not con.execute('SELECT 1 FROM lineage_source_scan_state WHERE source_id=? AND lease_token=?',
+                                         (source_id,lease_token)).fetchone():
+            raise HTTPException(409, '采集任务已被替换。')
+        latest = con.execute('''SELECT version,snapshot_hash FROM catalog_sync_snapshots WHERE source_id=?
+            ORDER BY version DESC LIMIT 1''', (source_id,)).fetchone()
+        previous = latest['version'] if latest else 0
+        if expected_version is not None and previous != expected_version:
+            raise HTTPException(409, '另一次采集已保存更新的快照，请重新采集。')
+        for item in normalized['tables']:
+            if item.get('asset_type') in {'view', 'materialized_view'}:
+                item['view_source_revision'] = source['lineage_source_revision']
+        snapshot_hash = _hash(normalized)
+        if automatic and latest and latest['snapshot_hash'] == snapshot_hash:
+            if discovery.get('view_scan_complete'):
+                from backend.lineage.views import record_view_observations
+                record_view_observations(con, source_id, discovery, previous)
+            con.commit()
+            return {'snapshot_version': previous, 'sync_status': 'no_changes', 'unchanged': True}
         _seed_baseline(con, source_id, actor_id)
-        snapshot_version = int(con.execute(
-            "SELECT COALESCE(MAX(version),0)+1 AS version FROM catalog_sync_snapshots WHERE source_id=?",
-            (source_id,),
-        ).fetchone()["version"])
+        snapshot_version = previous + 1
         con.execute("""INSERT INTO catalog_sync_runs(
           id,source_id,actor_id,status,snapshot_version,snapshot_hash,table_count,relationship_count)
           VALUES (?,?,?,'pending',?,?,?,?)""", (
@@ -217,6 +252,12 @@ def record_discovery(source_id: str, discovery: dict[str, Any], actor_id: str) -
           VALUES (?,?,?,?,?,?)""", (
             str(uuid.uuid4()), run_id, source_id, snapshot_version, snapshot_hash, _dump(normalized),
         ))
+        if source['kind'] == 'postgresql' and discovery.get('view_scan_complete'):
+            from backend.lineage.views import record_view_observations, invalidate_drifted_views, queue_view_refresh
+            record_view_observations(con, source_id, discovery, snapshot_version)
+            if not latest or latest['snapshot_hash'] != snapshot_hash:
+                invalidate_drifted_views(con, source_id)
+                queue_view_refresh(con, source_id)
 
         discovered = {_table_key(item["namespace"], item["name"]): item for item in normalized["tables"]}
         assets = {
@@ -236,6 +277,11 @@ def record_discovery(source_id: str, discovery: dict[str, Any], actor_id: str) -
             elif _hash(before) != _hash(after):
                 change_type = "table_changed"
             else:
+                # A fresh observation that matches the approved baseline can
+                # supersede a transient proposed change (including view DDL).
+                con.execute("""UPDATE catalog_sync_changes SET status='superseded',decided_at=CURRENT_TIMESTAMP,
+                    decision_reason='最新采集已恢复到审核版本' WHERE source_id=? AND entity_type='table'
+                    AND entity_key=? AND status='pending'""", (source_id, key))
                 continue
             bucket = "added" if change_type in {"table_added", "table_restored"} else "changed"
             counts[bucket] += 1
@@ -284,6 +330,8 @@ def record_discovery(source_id: str, discovery: dict[str, Any], actor_id: str) -
                 "run_id": run_id, "snapshot_version": snapshot_version, **summary, "pending_count": pending,
             })),
         )
+        if expected_source is not None:
+            con.execute('UPDATE data_sources SET last_synced_at=CURRENT_TIMESTAMP WHERE id=?', (source_id,))
         con.commit()
         return {
             "run_id": run_id, "snapshot_version": snapshot_version, "sync_status": status,
@@ -307,10 +355,10 @@ def _insert_or_update_table(con, source_id: str, asset_id: str, payload: dict[st
         new_description = asset["description"]
         if not new_description or new_description.startswith(("数据源未提供", "技术元数据待")):
             new_description = description
-        con.execute("""UPDATE catalog_assets SET namespace=?,physical_name=?,description=?,primary_key=?,
+        con.execute("""UPDATE catalog_assets SET namespace=?,physical_name=?,description=?,primary_key=?,asset_type=?,
           lifecycle_status='active',publish_status=?,catalog_version=catalog_version+1,
           source_updated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?""", (
-            payload["namespace"], payload["name"], new_description, primary_key, new_status, asset_id,
+            payload["namespace"], payload["name"], new_description, primary_key, payload.get('asset_type', 'table'), new_status, asset_id,
         ))
     else:
         semantics = table_semantics(description, payload["namespace"])
@@ -320,8 +368,8 @@ def _insert_or_update_table(con, source_id: str, asset_id: str, payload: dict[st
           id,source_id,namespace,physical_name,display_name,asset_type,domain_id,warehouse_layer,
           normalized_stage,description,aliases_json,data_grain,primary_key,owner_group_id,sensitivity,
           publish_status,certification_status,catalog_version,source_updated_at)
-          VALUES (?,?,?,?,?,'table',?,?,?,?,?,?,?,?,?,'draft','draft',1,CURRENT_TIMESTAMP)""", (
-            asset_id, source_id, payload["namespace"], payload["name"], payload["name"],
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft','draft',1,CURRENT_TIMESTAMP)""", (
+            asset_id, source_id, payload["namespace"], payload["name"], payload["name"], payload.get('asset_type', 'table'),
             semantics["domain_id"], layer, normalized_stage, description,
             _dump(semantics["aliases"]), semantics["data_grain"], primary_key,
             semantics["owner_group_id"], semantics["sensitivity"],
@@ -536,6 +584,9 @@ def decide_change(
         if decision == 'approve' and refresh_required:
             from backend.index_worker import enqueue_catalog
             enqueue_catalog(con)
+        if decision == 'approve' and change['entity_type'] == 'table':
+            from backend.lineage.views import queue_view_refresh
+            queue_view_refresh(con, source_id)
         con.commit()
     except Exception:
         con.rollback()
@@ -684,6 +735,9 @@ def rollback_change(source_id: str, change_id: str, actor_id: str) -> dict[str, 
         if refresh_required:
             from backend.index_worker import enqueue_catalog
             enqueue_catalog(con)
+        if change['entity_type'] == 'table':
+            from backend.lineage.views import queue_view_refresh
+            queue_view_refresh(con, source_id)
         con.commit()
     except Exception:
         con.rollback()

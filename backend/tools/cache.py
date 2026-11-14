@@ -93,9 +93,13 @@ def dependency_fingerprint(connection_factory: Callable[[], Any]) -> str:
         }
         if connection.execute("SELECT 1 FROM sqlite_master WHERE name='lineage_candidates'").fetchone():
             values['lineage_versions'] = [tuple(r) for r in connection.execute(
-                "SELECT id,version,status FROM lineage_candidates ORDER BY id")]
+                "SELECT id,version,status FROM lineage_candidates WHERE status='published' ORDER BY id")]
             values['lineage_sources'] = [tuple(r) for r in connection.execute(
-                "SELECT source_ref,version,status FROM lineage_source_states ORDER BY source_ref")]
+                "SELECT DISTINCT s.source_ref,s.version,s.status FROM lineage_source_states s "
+                "JOIN lineage_candidates c ON c.source_ref=s.source_ref WHERE c.status='published' ORDER BY s.source_ref")]
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='lineage_view_observations'").fetchone():
+                values['lineage_views'] = [tuple(r) for r in connection.execute('''SELECT source_id,namespace,name,
+                    definition_hash,definition_status,evidence_ref FROM lineage_view_observations ORDER BY source_id,namespace,name''')]
             # A newly observed constraint snapshot can invalidate evidence before
             # any catalog review changes the asset's own catalog_version.
             values['lineage_discoveries'] = [tuple(r) for r in connection.execute('''

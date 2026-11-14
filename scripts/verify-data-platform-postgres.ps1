@@ -2,7 +2,8 @@ param(
     [string]$Server = $env:DATA_AGENT_SSH_SERVER,
     [string]$KeyPath = $env:DATA_AGENT_SSH_KEY_PATH,
     [ValidateRange(20000, 40000)][int]$Port = 25433,
-    [switch]$RuntimeRecovery
+    [switch]$RuntimeRecovery,
+    [switch]$AutomaticLineage
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
@@ -16,7 +17,7 @@ if ($Server -notmatch '^[A-Za-z0-9_.@:-]+$' -or -not (Test-Path -LiteralPath $Ke
 if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
     throw "Local port $Port is already in use; choose another acceptance port."
 }
-$taskContainer = 'metric-pilot-acceptance-' + $PID
+$taskContainer = 'metric-pilot-acceptance-' + [Guid]::NewGuid().ToString('N').Substring(0,12)
 $taskRandom = [Security.Cryptography.RandomNumberGenerator]::Create()
 $taskBytes = New-Object byte[] 24
 $taskRandom.GetBytes($taskBytes)
@@ -28,7 +29,7 @@ $taskStarted = $false
 $taskPreviousDsn = $env:METRIC_PILOT_TEST_PG_DSN
 try {
     # Password travels through SSH stdin, never command arguments, output, files or Git.
-    $taskRemote = 'read -r POSTGRES_PASSWORD; POSTGRES_PASSWORD=$(printf "%s" "$POSTGRES_PASSWORD" | tr -d "\r"); export POSTGRES_PASSWORD; docker run --rm -d --name ' + $taskContainer +
+    $taskRemote = 'read -r POSTGRES_PASSWORD; POSTGRES_PASSWORD=$(printf "%s" "$POSTGRES_PASSWORD" | tr -d "\r"); export POSTGRES_PASSWORD; docker run --pull=never --rm -d --name ' + $taskContainer +
         ' --label metric-pilot-purpose=acceptance --memory=256m --cpus=1 --tmpfs /var/lib/postgresql/data:rw,size=256m' +
         ' -p 127.0.0.1:' + $Port + ':5432 -e POSTGRES_USER=mp_owner -e POSTGRES_DB=metric_pilot_acceptance -e POSTGRES_PASSWORD postgres:16'
     $taskContainerId = $taskPassword | & ssh @taskSshArgs $Server $taskRemote
@@ -48,9 +49,13 @@ try {
     if ($taskTunnel.HasExited) { throw 'Acceptance SSH tunnel did not start.' }
     $env:METRIC_PILOT_TEST_PG_DSN = "host=127.0.0.1 port=$Port dbname=metric_pilot_acceptance user=mp_owner password=$taskPassword"
     $env:PYTHONIOENCODING = 'utf-8'
-    $taskVerifyArgs=@('--postgres')
-    if($RuntimeRecovery) { $taskVerifyArgs+='--runtime-recovery' }
-    & (Join-Path $taskRoot '.venv\Scripts\python.exe') (Join-Path $PSScriptRoot 'verify_data_platform.py') @taskVerifyArgs
+    if ($AutomaticLineage) {
+        & (Join-Path $taskRoot '.venv\Scripts\python.exe') (Join-Path $PSScriptRoot 'verify_automatic_lineage_postgres.py')
+    } else {
+        $taskVerifyArgs=@('--postgres')
+        if($RuntimeRecovery) { $taskVerifyArgs+='--runtime-recovery' }
+        & (Join-Path $taskRoot '.venv\Scripts\python.exe') (Join-Path $PSScriptRoot 'verify_data_platform.py') @taskVerifyArgs
+    }
     if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL data platform acceptance failed.' }
 } finally {
     $env:METRIC_PILOT_TEST_PG_DSN = $taskPreviousDsn
@@ -59,6 +64,7 @@ try {
     if ($taskStarted) {
         # Only the uniquely named, disposable container created by this invocation.
         & ssh @taskSshArgs $Server "docker rm -f $taskContainer" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not remove this run's disposable container: $taskContainer" }
         Write-Host 'Disposable acceptance PostgreSQL and its in-memory data have been removed; existing containers were preserved.'
     }
 }

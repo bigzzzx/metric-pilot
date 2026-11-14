@@ -58,7 +58,7 @@ def test_builtin_preserves_error_classification(monkeypatch):
     from backend.tools import builtins
     from backend.tools.errors import ToolRuntimeError
     from backend.tools.models import ReadonlySqlInput, ToolExecutionContext
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise SQLSchemaError()
     monkeypatch.setattr(builtins, "run_readonly_sql", fail)
     with pytest.raises(ToolRuntimeError) as caught:

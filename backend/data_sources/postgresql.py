@@ -6,6 +6,15 @@ from urllib.parse import urlparse
 
 from backend.data_sources.base import ConnectorConfig, ConnectorUnavailable
 
+_RELATION_KINDS = {"r": "table", "p": "table", "v": "view", "m": "materialized_view"}
+_DISCOVERABLE = """
+    (c.relkind IN ('r', 'p') OR (c.relkind IN ('v', 'm')
+       AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')))
+    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+    AND n.nspname NOT LIKE 'pg_toast%'
+    AND n.nspname NOT LIKE 'pg_temp_%'
+"""
+
 
 def parse_endpoint(endpoint: str) -> tuple[str, int]:
     value = endpoint.strip()
@@ -76,22 +85,24 @@ class PostgresConnector:
     def discover(self) -> dict:
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                # pg_get_viewdef emits explicit schema names outside this path.
+                cursor.execute("SET LOCAL search_path = pg_catalog")
                 cursor.execute(
-                    """
-                    SELECT n.nspname AS namespace, c.relname AS name,
-                           COALESCE(obj_description(c.oid, 'pg_class'), '') AS description
+                    f"""
+                    SELECT n.nspname AS namespace, c.relname AS name, c.relkind,
+                           COALESCE(obj_description(c.oid, 'pg_class'), '') AS description,
+                           CASE WHEN c.relkind IN ('v', 'm')
+                                THEN left(pg_get_viewdef(c.oid, false), 100001) END AS view_definition
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE c.relkind IN ('r', 'p')
-                      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-                      AND n.nspname NOT LIKE 'pg_toast%'
-                      AND n.nspname NOT LIKE 'pg_temp_%'
+                    WHERE {_DISCOVERABLE}
                     ORDER BY n.nspname, c.relname
                     """
                 )
                 table_rows = cursor.fetchall()
                 cursor.execute(
-                    """
+                    f"""
                     SELECT n.nspname AS namespace, c.relname AS table_name,
                            a.attname AS name, format_type(a.atttypid, a.atttypmod) AS data_type,
                            a.attnum AS ordinal, NOT a.attnotnull AS nullable,
@@ -99,10 +110,7 @@ class PostgresConnector:
                     FROM pg_attribute a
                     JOIN pg_class c ON c.oid = a.attrelid
                     JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
-                      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-                      AND n.nspname NOT LIKE 'pg_toast%'
-                      AND n.nspname NOT LIKE 'pg_temp_%'
+                    WHERE {_DISCOVERABLE} AND a.attnum > 0 AND NOT a.attisdropped
                     ORDER BY n.nspname, c.relname, a.attnum
                     """
                 )
@@ -162,15 +170,19 @@ class PostgresConnector:
         tables = []
         for row in table_rows:
             key = (row["namespace"], row["name"])
-            tables.append(
-                {
-                    "namespace": row["namespace"],
-                    "name": row["name"],
-                    "description": row["description"],
-                    "primary_key": primary_keys[key],
-                    "columns": columns[key],
-                }
-            )
+            kind = _RELATION_KINDS[row["relkind"]]
+            relation = {
+                "namespace": row["namespace"],
+                "name": row["name"],
+                "description": row["description"],
+                "primary_key": primary_keys[key],
+                "columns": columns[key],
+            }
+            if kind != "table":
+                definition = row["view_definition"] or ""
+                relation.update(asset_type=kind, view_definition=definition if len(definition) <= 100000 else "",
+                                view_definition_status="too_large" if len(definition) > 100000 else "available" if definition else "unavailable")
+            tables.append(relation)
         relationships = [
             {
                 "from_namespace": row["from_namespace"],
@@ -191,5 +203,8 @@ class PostgresConnector:
             "tables": tables,
             "relationships": relationships,
             "table_count": len(tables),
+            "view_count": sum(item.get("asset_type") == "view" for item in tables),
+            "materialized_view_count": sum(item.get("asset_type") == "materialized_view" for item in tables),
+            "view_scan_complete": True,
             "relationship_count": len(relationships),
         }

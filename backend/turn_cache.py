@@ -136,6 +136,8 @@ def load_cached_response(identity: dict | None) -> dict | None:
     try:
         payload = {key: value for key, value in cached.items() if key != "_cached_at"}
         response = ChatResponse.model_validate(payload).model_dump(mode="json")
+        if response.get('sql') and not _sql_cacheable(response['sql'],identity.get('user_id'),response.get('source_id')):
+            return None
     except Exception as exc:
         log_event("turn_cache.invalid_entry", level=30, error_type=type(exc).__name__)
         return None
@@ -190,6 +192,8 @@ def store_cached_response(identity: dict | None, response: ChatResponse, state: 
     if payload_bytes > TURN_RESPONSE_CACHE_MAX_PAYLOAD_BYTES:
         log_event("turn_cache.payload_too_large", payload_bytes=payload_bytes)
         return False
+    if response.sql and not _sql_cacheable(response.sql,identity.get('user_id'),(state.get('plan') or {}).get('source_id')):
+        return False
     ttl = KNOWLEDGE_RESPONSE_CACHE_TTL_SECONDS if response.intent == "CHAT" else TURN_RESPONSE_CACHE_TTL_SECONDS
     _cache.set("turn-response", identity, payload, ttl)
     log_event(
@@ -199,3 +203,17 @@ def store_cached_response(identity: dict | None, response: ChatResponse, state: 
         ttl_seconds=ttl,
     )
     return True
+
+
+def _sql_cacheable(sql, user_id, source_id=None):
+    from backend.lineage.views import cacheable_query
+    if not user_id:
+        return False
+    try:
+        con = db()
+        try:
+            return cacheable_query(con,sql,user_id,source_id)
+        finally:
+            con.close()
+    except Exception:
+        return False

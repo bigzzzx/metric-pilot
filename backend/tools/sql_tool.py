@@ -30,20 +30,41 @@ def _validate_shape(sql: str) -> tuple[str, set[str]]:
     return statement, tables
 
 
-def run_readonly_sql(sql: str, user_id: str = "", source_id: str | None = None) -> list[dict]:
+def run_readonly_sql(sql: str, user_id: str = "", source_id: str | None = None, *,
+                     capture_origin=None, connection_factory=None) -> list[dict]:
+    source_revision = schema_hash = None
+    capture_sql = sql
+    pg_source = None
+    view_definitions = {}
     if user_id:
         tree, tables = parse_query(sql)
         con = db()
         try:
+            con.execute('BEGIN')
             assets = resolve_target(tables, con, user_id, source_id)
             selected = assets[0]
+            source_id = selected['source_id']
+            source = con.execute('SELECT * FROM data_sources WHERE id=? AND enabled=1', (source_id,)).fetchone()
+            if not source:
+                raise HTTPException(403, '数据源已停用。')
             if selected['source_kind'] == 'postgresql':
-                statement = validate_postgres(tree, tables, assets, con)
-                source = con.execute('SELECT * FROM data_sources WHERE id=? AND enabled=1', (selected['source_id'],)).fetchone()
-                return execute_postgres(source, statement)
+                from backend.lineage.views import query_view_definitions
+                view_definitions = query_view_definitions(con,user_id,assets)
+                capture_sql = validate_postgres(tree, tables, assets, con)
+                pg_source = source
+            if capture_origin:
+                from backend.lineage.capture import query_schema_hash
+                source_revision = source['lineage_source_revision']
+                schema_hash = query_schema_hash(con, source_id)
         finally:
             con.close()
-    return _run_sqlite(sql, user_id)
+    rows = (execute_postgres(pg_source, capture_sql, view_definitions=view_definitions) if view_definitions else
+            execute_postgres(pg_source, capture_sql) if pg_source is not None else _run_sqlite(sql, user_id))
+    if capture_origin and user_id and source_id:
+        from backend.lineage.capture import record_executed_query
+        record_executed_query(capture_sql,user_id,source_id,capture_origin,connection_factory=connection_factory or db,
+                              source_revision=source_revision,schema_hash=schema_hash)
+    return rows
 
 
 def _run_sqlite(sql: str, user_id: str = "") -> list[dict]:

@@ -45,8 +45,14 @@ def _query(statement):
     return query,target,columns
 
 
-def parse_statement(statement,assets,dialect,statement_index,observation):
+def parse_statement(statement,assets,dialect,statement_index,observation,*,view_target=None):
     query,target,target_columns = _query(statement)
+    if view_target:
+        if target is not None:
+            raise BindingError('unsupported_view_definition','数据库视图证据必须是查询定义。')
+        target = exp.Table(this=exp.to_identifier(view_target['physical_name'],quoted=True),
+                           db=exp.to_identifier(view_target['namespace'],quoted=True))
+        target_columns = list(view_target['columns'])
     target_asset = resolve_table(target,assets) if target is not None else None
     original_scope = build_scope(query)
     if original_scope is None:
@@ -182,7 +188,7 @@ def parse_statement(statement,assets,dialect,statement_index,observation):
     if target_asset:
         for aid in sorted(all_inputs):
             candidates.append(_candidate('table_transform',(aid,''),(target_asset['id'],''),
-                'INSERT SELECT' if isinstance(statement,exp.Insert) else 'CREATE AS',context,locator,observation))
+                'VIEW DEFINITION' if view_target else 'INSERT SELECT' if isinstance(statement,exp.Insert) else 'CREATE AS',context,locator,observation))
         for index,output in enumerate(outputs):
             loc = {**locator,'output_index':index}
             ctx = {**context,'expression_chain':output['expression_chain']}
@@ -202,18 +208,20 @@ def parse_statement(statement,assets,dialect,statement_index,observation):
     return dict(candidates=candidates,query_outputs=outputs,context=context)
 
 
-def parse_sql(content,assets,*,dialect='postgres',observation='design'):
+def parse_sql(content,assets,*,dialect='postgres',observation='design',view_target=None):
     """Parsing only. No database connections or SQL execution exist in this module."""
     result = dict(status='parsed',parser='sqlglot-'+sqlglot.__version__,statements=[],candidates=[],errors=[])
     try:
         statements = sqlglot.parse(content,read=dialect)
+        if view_target and (len(statements)!=1 or not isinstance(statements[0],exp.Select)):
+            raise BindingError('unsupported_view_definition','只解析单条静态 PostgreSQL 视图 SELECT 定义。')
         if len(statements)>30:
             raise BindingError('statement_budget','一次最多解析 30 条语句。')
         for index,statement in enumerate(statements):
             if statement is None:
                 continue
             try:
-                parsed = parse_statement(statement,assets,dialect,index,observation)
+                parsed = parse_statement(statement,assets,dialect,index,observation,view_target=view_target)
                 result['statements'].append({k:v for k,v in parsed.items() if k!='candidates'})
                 result['candidates'].extend(parsed['candidates'])
                 if len(result['candidates'])>3000:

@@ -391,6 +391,8 @@ def publish(metric_id, user_id, payload):
                VALUES (?,?,?,?)""",
             (metric_id, version, payload.model_dump_json(), user_id),
         )
+        from backend.lineage.metrics import record_contract
+        lineage_count = record_contract(con, metric_id, version, contract)
         con.execute(
             """INSERT INTO metric_wiki_index_jobs(id,metric_id,metric_version,status)
                VALUES (?,?,?,'pending')""",
@@ -404,7 +406,7 @@ def publish(metric_id, user_id, payload):
             }, ensure_ascii=False)),
         )
         con.commit()
-        return {"id": metric_id, "version": version, "status": "published",
+        return {"id": metric_id, "version": version, "status": "published", "lineage_count": lineage_count,
                 "index_status": "pending", "index_job_id": job_id}
     finally:
         con.close()

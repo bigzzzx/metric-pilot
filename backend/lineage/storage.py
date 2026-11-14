@@ -47,10 +47,26 @@ def init_schema(connection_factory=None):
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);
         CREATE TABLE IF NOT EXISTS lineage_query_history(
           id TEXT PRIMARY KEY,user_id TEXT NOT NULL,source_id TEXT,sql_text TEXT NOT NULL,
-          origin TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+          origin TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          source_revision INTEGER, schema_hash TEXT, parse_status TEXT NOT NULL DEFAULT 'pending',
+          parse_attempts INTEGER NOT NULL DEFAULT 0, next_parse_at REAL NOT NULL DEFAULT 0, evidence_ref TEXT);
+        CREATE TABLE IF NOT EXISTS lineage_source_scan_state(
+          source_id TEXT PRIMARY KEY, status TEXT NOT NULL, lease_token TEXT NOT NULL DEFAULT '',
+          next_scan_at REAL NOT NULL DEFAULT 0, last_scan_at TEXT, last_error TEXT NOT NULL DEFAULT '');
         ''')
+        columns = {row[1] for row in con.execute('PRAGMA table_info(lineage_query_history)')}
+        for name, definition in [('source_revision','INTEGER'), ('schema_hash','TEXT'),
+                ('parse_status',"TEXT NOT NULL DEFAULT 'pending'"), ('parse_attempts','INTEGER NOT NULL DEFAULT 0'),
+                ('next_parse_at','REAL NOT NULL DEFAULT 0'), ('evidence_ref','TEXT')]:
+            if name not in columns:
+                con.execute(f'ALTER TABLE lineage_query_history ADD COLUMN {name} {definition}')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_lineage_query_pending ON lineage_query_history(parse_status,next_parse_at)')
         from backend.index_worker import migrate
         migrate(con)
+        from backend.lineage.metrics import migrate as migrate_metrics
+        migrate_metrics(con)
+        from backend.lineage.views import migrate as migrate_views
+        migrate_views(con)
         con.commit()
     finally:
         con.close()

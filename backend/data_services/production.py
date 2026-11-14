@@ -112,6 +112,8 @@ def verified_source(config, user_id):
             raise HTTPException(403, '缺少输入资产的 discover 或 query_data 权限。')
         if row['publish_status'] != 'published' or row['lifecycle_status'] != 'active' or not row['source_enabled']:
             raise HTTPException(409, '输入资产未发布、已归档或数据源已停用。')
+        if row['asset_type'] != 'table':
+            raise HTTPException(422, '当前生产模板仅允许输入实体表；视图仅用于受控只读查询。')
         if row['source_kind'] not in {'local-sqlite', 'postgresql'}:
             raise HTTPException(422, '生产任务当前支持 SQLite 演示数仓和 PostgreSQL。')
         if row['source_kind'] == 'local-sqlite' and row['source_id'] != 'local-ecommerce-demo':

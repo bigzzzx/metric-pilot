@@ -36,10 +36,11 @@ def rag_documents(con):
         left,right = assets[edge['from_asset_id']],assets[edge['to_asset_id']]
         source = con.execute('SELECT source_kind,source_version,title FROM lineage_sources WHERE id=?',(edge['source_ref'],)).fetchone()
         review = edge['review']
+        review_label = '数据库视图定义已通过目录审核（不是执行事实）' if review.get('basis') == 'approved_view_definition' else '人工业务审核：已批准并发布'
         text = (f"{'表关联' if edge['kind']=='join' else '数据血缘'}：{left['namespace']}.{left['physical_name']}.{edge['from_column']} → "
             f"{right['namespace']}.{right['physical_name']}.{edge['to_column']}。类型：{edge['kind']}。表达式：{edge['expression'][:2000]}{'...（完整表达式见证据）' if len(edge['expression'])>2000 else ''}。"
             f"证据类型：{source['source_kind']}；观察：{edge['observation']}（设计定义不代表实际执行，外部上报不代表平台观察）。"
-            f"人工业务审核：已批准并发布。基数：{review.get('cardinality','unknown')}；建议连接：{review.get('recommended_join','unspecified')}。"
+            f"{review_label}。基数：{review.get('cardinality','unknown')}；建议连接：{review.get('recommended_join','unspecified')}。"
             f"证据 ID：{edge['source_ref']}；来源版本：{source['source_version']}。")
         # Raw document paragraphs and arbitrary quotes are intentionally NOT model context.
         docs.append(dict(id='catalog:evidence:'+edge['id'],kind='relation' if edge['kind']=='join' else 'field_lineage',
@@ -67,9 +68,37 @@ def relationships(con,user_id,asset_id):
         provenance=e['observation'],source_ref=e['source_ref']) for e in edges if e['kind']=='join' and asset_id in candidate_assets(e)]
 
 
+def walk_edges(con, assets, edges, anchors, direction, hops, include_influences=False):
+    """Traverse like-for-like endpoints, never follow JOIN hints as transformations."""
+    if not anchors:
+        return [], set()
+    by_field = all(column for _, column in anchors)
+    allowed = {'column_value','column_influence'} if by_field and include_influences else {'column_value'} if by_field else {'table_transform'}
+    frontier, seen, found = set(anchors), set(anchors), {}
+    for _ in range(max(1,min(3,hops))):
+        nxt = set()
+        for edge in edges:
+            if edge['kind'] not in allowed:
+                continue
+            src = (edge['from_asset_id'],edge['from_column'] if by_field else '')
+            dst = (edge['to_asset_id'],edge['to_column'] if by_field else '')
+            anchor, other = (dst,src) if direction=='upstream' else (src,dst)
+            if anchor not in frontier:
+                continue
+            if edge['id'] not in found:
+                found[edge['id']] = _decorate(con,edge,assets)
+            nxt.add(other)
+        frontier = nxt-seen
+        seen.update(nxt)
+        if not frontier:
+            break
+    return list(found.values()), seen
+
+
 def lineage(user_id,asset_id,column='',direction='upstream',hops=2,include_influences=False,*,connection_factory=None):
     con = (connection_factory or db)()
     try:
+        con.execute('BEGIN')
         edges,assets = published_candidates(con,user_id)
         asset = assets.get(asset_id)
         if not asset or not asset['source_enabled'] or asset['publish_status']!='published':
@@ -77,22 +106,18 @@ def lineage(user_id,asset_id,column='',direction='upstream',hops=2,include_influ
         if column and (column not in asset['columns'] or asset['columns'][column]['sensitivity'] in {'sensitive','restricted'}):
             raise HTTPException(404,'字段不存在或不可查看。')
         if direction not in {'upstream','downstream'}: raise HTTPException(422,'direction 必须是 upstream/downstream。')
-        allowed = {'column_value','column_influence'} if column and include_influences else {'column_value'} if column else {'table_transform'}
-        frontier,seen,found = {(asset_id,column)},{(asset_id,column)},{}
-        for _ in range(max(1,min(3,hops))):
-            nxt = set()
-            for edge in edges:
-                if edge['kind'] not in allowed: continue
-                src = (edge['from_asset_id'],edge['from_column'] if column else '')
-                dst = (edge['to_asset_id'],edge['to_column'] if column else '')
-                anchor,other = (dst,src) if direction=='upstream' else (src,dst)
-                if anchor not in frontier: continue
-                found[edge['id']] = _decorate(con,edge,assets)
-                nxt.add(other)
-            frontier = nxt-seen; seen.update(nxt)
-            if not frontier: break
+        found,seen = walk_edges(con,assets,edges,{(asset_id,column)},direction,hops,include_influences)
+        from backend.lineage.metrics import metric_impacts
+        from backend.lineage.views import view_status
+        if direction=='downstream':
+            impact_nodes = seen
+            if column and not include_influences:
+                _,impact_nodes = walk_edges(con,assets,edges,{(asset_id,column)},direction,hops,include_influences=True)
+            impacts = metric_impacts(con,user_id,impact_nodes,via_column=bool(column))
+        else:
+            impacts = []
         return dict(asset_id=asset_id,column=column,direction=direction,hops=max(1,min(3,hops)),
             nodes=[dict(asset_id=aid,column=col,table=assets[aid]['physical_name'],namespace=assets[aid]['namespace'],source_id=assets[aid]['source_id']) for aid,col in sorted(seen)],
-            edges=list(found.values()),scope='current_authorized_published',
-            limitation='只展示已审核发布证据；设计/外部上报与实际成功运行分别标识。没有边不代表不存在依赖。')
+            edges=found,metric_impacts=impacts,view_status=view_status(con,asset),scope='current_authorized_published',
+            limitation='只展示当前有权限的已发布证据；数据库定义、设计、外部上报和成功运行分别标识。没有边不代表不存在依赖。')
     finally: con.close()

@@ -13,12 +13,16 @@ class FakeCursor:
         return False
 
     def execute(self, sql):
-        if "current_database()" in sql:
+        assert '{_DISCOVERABLE}' not in sql and not sql.rstrip().endswith('f')
+        if sql.startswith('SET '):
+            self.rows = []
+        elif "current_database()" in sql:
             self.rows = [{"database_name": "warehouse", "username": "reader", "read_only": "on", "server_version": "16.14"}]
         elif "c.relname AS name" in sql:
             self.rows = [
-                {"namespace": "ods", "name": "orders", "description": "订单原始表"},
-                {"namespace": "ods", "name": "users", "description": "用户原始表"},
+                {"namespace": "ods", "name": "orders", "description": "订单原始表", "relkind":"r"},
+                {"namespace": "ods", "name": "users", "description": "用户原始表", "relkind":"p"},
+                {"namespace": "dws", "name": "sales", "description": "销售", "relkind":"v", "view_definition":"SELECT order_id FROM ods.orders"},
             ]
         elif "FROM pg_attribute a" in sql:
             self.rows = [
@@ -93,7 +97,10 @@ def test_connection_is_forced_read_only():
 def test_discovery_returns_namespaces_comments_keys_and_relationships():
     result = PostgresConnector(config(), connect_factory=lambda **_kwargs: FakeConnection()).discover()
 
-    assert result["table_count"] == 2
+    assert result["table_count"] == 3
+    assert result['view_count'] == 1 and result['view_scan_complete']
+    view = next(item for item in result['tables'] if item['name']=='sales')
+    assert view['asset_type']=='view' and view['view_definition_status']=='available'
     assert result["relationship_count"] == 1
     orders = next(table for table in result["tables"] if table["name"] == "orders")
     assert orders["namespace"] == "ods"

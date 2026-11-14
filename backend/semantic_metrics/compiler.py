@@ -74,7 +74,7 @@ def fast_request(question,metric,today=None):
     return MetricRequest(start_date=start,end_date=end,dimensions=dimensions)
 
 
-def validate_expression(contract,columns):
+def measure_ast(contract,columns):
     dialect='postgres' if contract.dialect=='postgresql' else contract.dialect
     trees=sqlglot.parse(contract.measure_expression,read=dialect)
     if len(trees)!=1 or trees[0] is None: raise ValueError('Invalid measure expression')
@@ -85,7 +85,11 @@ def validate_expression(contract,columns):
         raise ValueError('Measure must be an approved aggregate expression')
     if any(c.table or c.name not in columns for c in tree.find_all(exp.Column)):
         raise ValueError('Measure references an unavailable column')
-    return tree.sql(dialect=dialect)
+    return tree
+
+
+def validate_expression(contract,columns):
+    return measure_ast(contract,columns).sql(dialect='postgres' if contract.dialect=='postgresql' else contract.dialect)
 
 
 def compile_metric_query(question,resolution,*,request=None,today=None,columns=None):

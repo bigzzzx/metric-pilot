@@ -85,8 +85,18 @@ class ToolExecutor:
                 status=ToolStatus.DENIED,
                 required_permission=decision.required_permission,
             )
-        if (self.cache and decision.risk_level is not RiskLevel.HIGH
-                and spec.cache_ttl_seconds > 0 and context.cache_mode == "default"):
+        use_cache = bool(self.cache and decision.risk_level is not RiskLevel.HIGH and spec.cache_ttl_seconds > 0)
+        if use_cache and tool_id == 'readonly_sql' and context.cache_mode != 'bypass':
+            from backend.lineage.views import cacheable_query
+            try:
+                connection = self.connection_factory()
+                try:
+                    use_cache = cacheable_query(connection,normalized['sql'],context.user_id,normalized.get('source_id'))
+                finally:
+                    connection.close()
+            except Exception:
+                use_cache = False
+        if use_cache and context.cache_mode == "default":
             cached = self.cache.get(spec, normalized, context)
             if cached is not None:
                 try:
@@ -154,16 +164,11 @@ class ToolExecutor:
                 connection_factory=self.connection_factory,
             )
             log_event("tool.executed", tool_id=tool_id, duration_ms=duration)
-            if tool_id == 'readonly_sql':
-                from backend.lineage.capture import record_executed_query
-                record_executed_query(normalized['sql'],context.user_id,normalized.get('source_id'),
-                    'tool:readonly_sql',connection_factory=self.connection_factory)
             result = ToolResult(
                 status=ToolStatus.SUCCESS, tool_id=tool_id, call_id=context.call_id,
                 data=serialized, audit_id=audit_id,
             )
-            if (self.cache and decision.risk_level is not RiskLevel.HIGH
-                    and spec.cache_ttl_seconds > 0 and context.cache_mode != "bypass"):
+            if use_cache and context.cache_mode != "bypass":
                 self.cache.set(spec, normalized, context, serialized)
             if self.cache and tool_id in {"sql_write", "etl_execute"}:
                 self.cache.invalidate_all()

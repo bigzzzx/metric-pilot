@@ -47,6 +47,8 @@ def _can_read_source(con,row,user_id):
     if is_platform_admin(user_id,con):
         return True
     ids = json.loads(row['scope_json']).get('asset_ids',[])
+    if row['source_kind']=='query_execution' and json.loads(row['metadata_json']).get('executed_by')!=user_id:
+        return False
     ids = sorted(set(ids)|set(json.loads(row['metadata_json']).get('resolved_asset_ids',[])))
     return set(ids) <= set(assets_for(con,user_id,asset_ids=ids)) if ids else row['created_by']==user_id
 
@@ -138,7 +140,10 @@ def import_evidence(payload: EvidenceInput,user_id,*,connection_factory=None,_so
     try:
         if not _system:
             require_admin(con,user_id)
-        assets = assets_for(con,user_id,payload.source_id,payload.asset_ids or None)
+        # Background SQL observations still bind against the executing user's
+        # catalog scope, not against the platform administrator's visibility.
+        subject = (_metadata or {}).get('executed_by', user_id) if _source_kind=='query_execution' else user_id
+        assets = assets_for(con,subject,payload.source_id,payload.asset_ids or None)
         if payload.asset_ids and not set(payload.asset_ids)<=set(assets):
             raise HTTPException(403,'部分资产不存在或缺少 discover/view_metadata 权限。')
         if payload.source_kind == 'business_document':
@@ -156,7 +161,9 @@ def import_evidence(payload: EvidenceInput,user_id,*,connection_factory=None,_so
                 observation = 'query_observed'
             else:
                 observation = 'design'
-            analysis = parse_sql(payload.content,assets,dialect=dialect,observation=observation)
+            query_gap = _query_observation_gap(con,payload.source_id,_metadata) if _source_kind=='query_execution' else None
+            analysis = (dict(status='unresolved',candidates=[],errors=[dict(code=query_gap)]) if query_gap else
+                        parse_sql(payload.content,assets,dialect=dialect,observation=observation))
             metadata = _metadata or {'run':payload.run_metadata}
             resolved = {aid for c in analysis.get('candidates',[]) for aid in candidate_assets(c)}
             for statement in analysis.get('statements',[]):
@@ -164,17 +171,36 @@ def import_evidence(payload: EvidenceInput,user_id,*,connection_factory=None,_so
                 if statement['context'].get('target_asset_id'): resolved.add(statement['context']['target_asset_id'])
             metadata = {**metadata,'resolved_asset_ids':sorted(resolved)}
         con.execute('BEGIN IMMEDIATE')
+        if _source_kind=='query_execution' and not query_gap:
+            query_gap = _query_observation_gap(con,payload.source_id,_metadata)
+            if query_gap:
+                analysis = dict(status='unresolved',candidates=[],errors=[dict(code=query_gap)])
         source_ref,created = _store_source(con,payload,user_id,analysis,source_kind=_source_kind,metadata=metadata)
         if created:
             _persist_candidates(con,source_ref,analysis,assets)
         con.commit()
         row = con.execute('SELECT * FROM lineage_sources WHERE id=?',(source_ref,)).fetchone()
+        if _source_kind=='query_execution' and user_id!='system:lineage' and not _can_read_source(con,row,user_id):
+            return None
         return {**_source_view(con,row,content=False),'idempotent':not created}
     except Exception:
         con.rollback()
         raise
     finally:
         con.close()
+
+
+def _query_observation_gap(con, source_id, metadata):
+    from backend.lineage.capture import query_schema_hash
+    metadata = metadata or {}
+    source = con.execute('SELECT lineage_source_revision,enabled FROM data_sources WHERE id=?',(source_id,)).fetchone()
+    if metadata.get('source_revision') is None or not metadata.get('schema_hash'):
+        return 'historical_schema_unknown'
+    if not source or not source['enabled'] or source['lineage_source_revision'] != metadata['source_revision']:
+        return 'source_changed_since_execution'
+    if query_schema_hash(con, source_id) != metadata['schema_hash']:
+        return 'schema_changed_since_execution'
+    return None
 
 
 def current_candidate(con,item,assets,*,published=False):
@@ -184,6 +210,15 @@ def current_candidate(con,item,assets,*,published=False):
         if not source or source['status']!='active' or digest(pins)!=digest(item['schema']):
             return False
         raw = con.execute('SELECT source_kind,source_id,metadata_json FROM lineage_sources WHERE id=?',(item['source_ref'],)).fetchone()
+        if raw and raw['source_kind']=='postgres_view_definition':
+            from backend.lineage.views import evidence_is_current
+            if not evidence_is_current(con,item['source_ref'],raw['source_id'],json.loads(raw['metadata_json'])):
+                return False
+        if raw and raw['source_kind']=='query_execution':
+            revision = json.loads(raw['metadata_json']).get('source_revision')
+            current_source = con.execute('SELECT lineage_source_revision FROM data_sources WHERE id=?',(raw['source_id'],)).fetchone()
+            if revision is not None and (not current_source or current_source['lineage_source_revision'] != revision):
+                return False
         if raw and raw['source_kind'] in {'database_constraint','catalog_declaration'}:
             if raw['source_kind']=='database_constraint':
                 state = con.execute('SELECT snapshot_hash AS content_hash FROM catalog_sync_snapshots WHERE source_id=? ORDER BY version DESC LIMIT 1',(raw['source_id'],)).fetchone()
@@ -357,11 +392,18 @@ def reanalyze(source_ref,user_id,*,connection_factory=None):
     if source['state']['status']!='active': raise HTTPException(409,'请先显式恢复失效证据。')
     con = factory()
     try:
-        assets = assets_for(con,user_id,source['source_id'],source['scope']['asset_ids'] or None)
+        if source['source_kind']=='query_execution':
+            gap = _query_observation_gap(con,source['source_id'],source['metadata'])
+            if gap:
+                raise HTTPException(409,'执行时的资产结构不可验证，请不要用当前结构回填历史执行血缘。')
+        subject = source['metadata'].get('executed_by',user_id) if source['source_kind']=='query_execution' else user_id
+        assets = assets_for(con,subject,source['source_id'],source['scope']['asset_ids'] or None)
         existing = con.execute('SELECT observation FROM lineage_candidates WHERE source_ref=? LIMIT 1',(source_ref,)).fetchone()
         obs = existing['observation'] if existing else 'query_observed' if source['source_kind']=='query_execution' else 'run_observed' if source['source_kind']=='production_run' and source['metadata'].get('run',{}).get('state')=='COMPLETE' else 'run_failed' if source['source_kind']=='production_run' else 'design'
         parsed = parse_sql(source['content'],assets,dialect='sqlite' if {a['source_kind'] for a in assets.values()}=={'local-sqlite'} else 'postgres',observation=obs)
         con.execute('BEGIN IMMEDIATE')
+        if source['source_kind']=='query_execution' and _query_observation_gap(con,source['source_id'],source['metadata']):
+            raise HTTPException(409,'重新解析期间数据源或字段版本已变化。')
         current = con.execute('SELECT status,version FROM lineage_source_states WHERE source_ref=?',(source_ref,)).fetchone()
         if current['status']!='active' or current['version']!=source['state']['version']:
             raise HTTPException(409,'来源状态已变化。')

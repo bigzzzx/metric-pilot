@@ -37,6 +37,17 @@ def event(payload:EventInput,user:dict=Depends(require_user)): return import_eve
 def collect(user:dict=Depends(require_user)): return collect_available(user['id'])
 
 
+@router.get('/evidence/collector')
+def collector_status(user: dict = Depends(require_user)):
+    from backend.lineage.worker import status_view
+    con = db()
+    try:
+        service.require_admin(con, user['id'])
+        return status_view(con)
+    finally:
+        con.close()
+
+
 @router.post('/evidence/upload')
 async def upload(file:UploadFile=File(...),source_id:str=Form(''),asset_ids:str=Form('[]'),user:dict=Depends(require_user)):
     try:
@@ -166,3 +177,33 @@ def retry_one_index(kind:Literal['lineage','wiki','catalog'],identifier:str,
 @router.get('/assets/{asset_id}/field-lineage')
 def field_lineage(asset_id:str,column:str='',direction:str='upstream',hops:int=Query(2,ge=1,le=3),include_influences:bool=False,user:dict=Depends(require_user)):
     return lineage(user['id'],asset_id,column,direction,hops,include_influences)
+
+
+@router.get('/metrics/{metric_id}/lineage')
+def governed_metric_lineage(metric_id: str, user: dict = Depends(require_user)):
+    from backend.lineage.metrics import metric_lineage
+    return metric_lineage(user['id'], metric_id)
+
+
+@router.get('/admin/data-sources/{source_id}/view-definition')
+def reviewed_view_definition(source_id: str, change_id: str, user: dict = Depends(require_user)):
+    """Review the exact observation version without exposing DDL in list responses."""
+    from backend.catalog.publications import require_platform_admin
+    require_platform_admin(user['id'])
+    con = db()
+    try:
+        con.execute('BEGIN')
+        change = con.execute('SELECT * FROM catalog_sync_changes WHERE id=? AND source_id=?', (change_id,source_id)).fetchone()
+        if not change:
+            raise HTTPException(404,'未找到元数据变更。')
+        payload = json.loads(change['after_json'] or '{}')
+        row = con.execute('''SELECT v.definition,v.definition_hash,v.definition_status,v.source_revision FROM lineage_view_observations v
+            JOIN data_sources s ON s.id=v.source_id AND s.lineage_source_revision=v.source_revision AND s.enabled=1
+            WHERE v.source_id=? AND v.namespace=? AND v.name=?''', (source_id,payload.get('namespace'),payload.get('name'))).fetchone()
+        if not row or (payload.get('view_definition_hash'),payload.get('view_source_revision'),payload.get('view_definition_status')) != (
+            row['definition_hash'],row['source_revision'],row['definition_status'],
+        ):
+            raise HTTPException(409,'该变更已不是当前采集到的定义，请刷新后重新审核。')
+        return {'definition': row['definition'], 'definition_hash': row['definition_hash'], 'status': row['definition_status']}
+    finally:
+        con.close()

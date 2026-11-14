@@ -161,6 +161,8 @@ def _publish_in_transaction(con, asset_id: str, actor_id: str, expected_version:
         (actor_id,"publish","asset",asset_id,json.dumps({"batch_id": batch_id} if batch_id else {}, ensure_ascii=False)),
     )
     from backend.index_worker import enqueue_catalog
+    from backend.lineage.views import queue_view_refresh
+    queue_view_refresh(con, asset['source_id'])
     index_job_id = enqueue_catalog(con)
     return {"asset_id": asset_id, "status": "published", "version": next_version,"index_job_id":index_job_id}
 

@@ -27,6 +27,7 @@ def main():
         # Worker lifecycle is exercised explicitly with isolated factories.
         os.environ["CATALOG_INDEX_WORKER_ENABLED"] = "0"
         os.environ["PRODUCTION_RECOVERY_MONITOR_ENABLED"] = "0"
+        os.environ["LINEAGE_COLLECTOR_ENABLED"] = "0"
         os.environ["APP_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
         os.environ.pop("DEEPSEEK_API_KEY", None)
         from backend.evaluation.fixtures import create_warehouse
