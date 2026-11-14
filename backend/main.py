@@ -15,7 +15,6 @@ from backend.api import admin_router, catalog_router, knowledge_router, metadata
 from backend.catalog import init_catalog_schema
 from backend.catalog.repository import provision_user_access
 from backend.catalog.publications import require_catalog_admin, require_platform_admin
-from backend.catalog.sync import record_discovery
 from backend.catalog.service import is_platform_admin
 from backend.connectors import ConnectorUnavailable
 from backend.data_sources.service import (
@@ -104,6 +103,10 @@ def init_storage(connection_factory=None):
     if "proxy_url" not in provider_columns: con.execute("ALTER TABLE providers ADD COLUMN proxy_url TEXT NOT NULL DEFAULT ''")
     source_columns = {row["name"] for row in con.execute("PRAGMA table_info(data_sources)")}
     if "username" not in source_columns: con.execute("ALTER TABLE data_sources ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+    if "auto_lineage_interval_minutes" not in source_columns:
+        con.execute("ALTER TABLE data_sources ADD COLUMN auto_lineage_interval_minutes INTEGER NOT NULL DEFAULT 0")
+    if "lineage_source_revision" not in source_columns:
+        con.execute("ALTER TABLE data_sources ADD COLUMN lineage_source_revision INTEGER NOT NULL DEFAULT 1")
     if not con.execute("SELECT 1 FROM providers").fetchone() and os.getenv("DEEPSEEK_API_KEY"):
         provider_id, model_id = str(uuid.uuid4()), str(uuid.uuid4())
         con.execute("INSERT INTO providers(id,name,kind,base_url,api_key,enabled,connection_mode,proxy_url) VALUES (?,?,?,?,?,1,'direct','')", (provider_id,"DeepSeek","openai-compatible",os.getenv("DEEPSEEK_BASE_URL","https://api.deepseek.com"),secrets().encrypt(os.environ["DEEPSEEK_API_KEY"].encode()).decode()))
@@ -202,6 +205,7 @@ class DataSourceIn(BaseModel):
     username: str = Field(default="", max_length=128)
     credential: str = ""
     enabled: bool = True
+    auto_lineage_interval_minutes: int = Field(default=0, ge=0, le=1440)
 class DataSourceUpdate(DataSourceIn):
     pass
 class SkillIn(BaseModel):
@@ -240,8 +244,10 @@ async def lifespan(_app: FastAPI):
     register_mcp_tools(initialized_registry())
     from backend.index_worker import start_worker
     from backend.runtime_recovery_monitor import start_monitor
+    from backend.lineage.worker import start_lineage_worker
     worker = start_worker(db)
     monitor = start_monitor(db)
+    collector = start_lineage_worker(db)
     try:
         yield
     finally:
@@ -249,6 +255,8 @@ async def lifespan(_app: FastAPI):
             worker.stop(timeout=2)
         if monitor is not None:
             monitor.stop(timeout=2)
+        if collector is not None:
+            collector.stop(timeout=2)
 
 
 app = FastAPI(title="Local Data Agent Platform", lifespan=lifespan)
@@ -510,22 +518,41 @@ def data_sources(user: dict = Depends(require_user)):
 @app.post("/api/data-sources")
 def create_data_source(payload: DataSourceIn, user: dict = Depends(require_user)):
     require_platform_admin(user["id"])
+    from backend.lineage.worker import validate_scan_interval
+    validate_scan_interval(payload.kind, payload.auto_lineage_interval_minutes)
     source_id = str(uuid.uuid4())
     credential = encrypted_password(payload.credential)
     con = db(); con.execute("""INSERT INTO data_sources
-      (id,name,kind,endpoint,catalog_name,auth_type,credential,enabled,last_synced_at,username)
-      VALUES (?,?,?,?,?,?,?,?,?,?)""", (source_id, payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), None, payload.username)); con.commit()
+      (id,name,kind,endpoint,catalog_name,auth_type,credential,enabled,last_synced_at,username,auto_lineage_interval_minutes)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (source_id, payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), None, payload.username,payload.auto_lineage_interval_minutes)); con.commit()
     row = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone(); con.close(); return data_source_view(row)
 
 
 @app.put("/api/data-sources/{source_id}")
 def update_data_source(source_id: str, payload: DataSourceUpdate, user: dict = Depends(require_user)):
     require_platform_admin(user["id"])
-    con = db(); existing = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone()
+    from backend.lineage.worker import validate_scan_interval
+    validate_scan_interval(payload.kind, payload.auto_lineage_interval_minutes)
+    con = db(); con.execute('BEGIN IMMEDIATE')
+    existing = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone()
     if not existing:
         con.close(); raise HTTPException(404, "Data source not found")
     credential = encrypted_password(payload.credential, existing["credential"])
-    con.execute("UPDATE data_sources SET name=?,kind=?,endpoint=?,catalog_name=?,auth_type=?,credential=?,enabled=?,username=? WHERE id=?", (payload.name, payload.kind, payload.endpoint.rstrip("/"), payload.catalog_name, payload.auth_type, credential, int(payload.enabled), payload.username, source_id)); con.commit()
+    endpoint = payload.endpoint.rstrip('/')
+    identity_changed = (existing['kind'],existing['endpoint'],existing['catalog_name'],existing['username'],existing['enabled']) != (
+        payload.kind, endpoint, payload.catalog_name, payload.username, int(payload.enabled)) or bool(payload.credential)
+    con.execute("""UPDATE data_sources SET name=?,kind=?,endpoint=?,catalog_name=?,auth_type=?,credential=?,enabled=?,username=?,
+        auto_lineage_interval_minutes=?,lineage_source_revision=lineage_source_revision+? WHERE id=?""",
+        (payload.name,payload.kind,endpoint,payload.catalog_name,payload.auth_type,credential,int(payload.enabled),payload.username,
+         payload.auto_lineage_interval_minutes,int(identity_changed),source_id))
+    if identity_changed:
+        from backend.lineage.views import queue_view_refresh
+        queue_view_refresh(con, source_id)
+        from backend.index_worker import enqueue_catalog
+        enqueue_catalog(con)
+    if identity_changed or existing['auto_lineage_interval_minutes'] != payload.auto_lineage_interval_minutes:
+        con.execute('DELETE FROM lineage_source_scan_state WHERE source_id=?',(source_id,))
+    con.commit()
     row = con.execute("SELECT * FROM data_sources WHERE id=?", (source_id,)).fetchone(); con.close(); return data_source_view(row)
 
 
@@ -564,12 +591,8 @@ def test_data_source(source_id: str, user: dict = Depends(require_user)):
 def sync_data_source(source_id: str, user: dict = Depends(require_user)):
     require_platform_admin(user["id"])
     try:
-        row, connector = source_connector(source_id)
-        result = connector.discover()
-        log_event("catalog.source_sync", source_id=source_id, kind=row["kind"], table_count=result["table_count"])
-        review = record_discovery(source_id, result, user["id"])
-        con = db(); con.execute("UPDATE data_sources SET last_synced_at=CURRENT_TIMESTAMP WHERE id=?", (source_id,)); con.commit(); con.close()
-        return {**result, **review}
+        from backend.lineage.worker import discover_source
+        return discover_source(source_id, user['id'], connection_factory=db)
     except ConnectorUnavailable as exc:
         return JSONResponse(status_code=501, content={"detail": str(exc), "code": "connector_unavailable"})
 @app.get("/api/providers")

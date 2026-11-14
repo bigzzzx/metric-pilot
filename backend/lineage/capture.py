@@ -1,6 +1,7 @@
 """Collect only available platform evidence. No external DB log access is implied."""
 import json
 import uuid
+import time
 
 from backend.core import db
 from backend.observability import log_event
@@ -10,15 +11,29 @@ from backend.lineage.models import EvidenceInput
 from backend.lineage.storage import canonical, digest
 
 
-def record_executed_query(sql,user_id,source_id,origin,*,connection_factory=None):
+def query_schema_hash(con, source_id):
+    # Pin the approved source schema; no row data, credentials or remote I/O.
+    return digest([tuple(row) for row in con.execute('''SELECT a.id,a.namespace,a.physical_name,a.catalog_version,
+        c.id,c.physical_name,c.data_type,c.sensitivity FROM catalog_assets a
+        LEFT JOIN catalog_columns c ON c.asset_id=a.id WHERE a.source_id=? AND a.publish_status='published'
+        AND a.lifecycle_status='active' ORDER BY a.id,c.ordinal,c.id''', (source_id,))])
+
+
+def record_executed_query(sql,user_id,source_id,origin,*,connection_factory=None,source_revision=None,schema_hash=None):
     """Called only after an actual successful read; cache hits do not enter here."""
     if len(sql)>100000:
         log_event('lineage.query_capture_skipped',level=30,reason='sql_budget_exceeded')
         return
     con = (connection_factory or db)()
     try:
-        con.execute('INSERT INTO lineage_query_history(id,user_id,source_id,sql_text,origin) VALUES (?,?,?,?,?)',
-            (str(uuid.uuid4()),user_id,source_id or 'local-ecommerce-demo',sql,origin))
+        source_id = source_id or 'local-ecommerce-demo'
+        source = con.execute('SELECT lineage_source_revision,enabled FROM data_sources WHERE id=?', (source_id,)).fetchone()
+        if not source or not source['enabled'] or (source_revision is not None and source_revision != source['lineage_source_revision']):
+            return
+        schema_hash = schema_hash or query_schema_hash(con, source_id)
+        con.execute('''INSERT INTO lineage_query_history(id,user_id,source_id,sql_text,origin,source_revision,schema_hash)
+            VALUES (?,?,?,?,?,?,?)''',
+            (str(uuid.uuid4()),user_id,source_id,sql,origin,source['lineage_source_revision'],schema_hash))
         # This is a bounded operational queue, not immutable imported evidence.
         con.execute('''DELETE FROM lineage_query_history WHERE id NOT IN
             (SELECT id FROM lineage_query_history ORDER BY created_at DESC,rowid DESC LIMIT 1000)''')
@@ -27,6 +42,55 @@ def record_executed_query(sql,user_id,source_id,origin,*,connection_factory=None
         log_event('lineage.query_capture_failed',level=30,error_type=type(exc).__name__)
     finally:
         con.close()
+
+
+def _import_query(item, actor, factory):
+    if actor != 'system:lineage':
+        con = factory()
+        try:
+            if not service.is_platform_admin(actor, con) and item['user_id'] != actor:
+                # Delegated managers must not claim another user's raw SQL.
+                return None
+        finally:
+            con.close()
+    return service.import_evidence(EvidenceInput(title='平台成功查询 / '+item['origin'],
+        content=item['sql_text'],source_id=item['source_id'],source_uri='platform://queries/'+item['id'],
+        source_version='1'),actor,connection_factory=factory,_source_kind='query_execution',_system=True,
+        _metadata=dict(executed_by=item['user_id'],executed_at=item['created_at'],origin=item['origin'],
+                       source_revision=item['source_revision'],schema_hash=item['schema_hash']))
+
+
+def process_pending_query(factory=db, now=None):
+    """Idempotent SQL-only consumer. A crash before acknowledgement is safe to retry."""
+    now = time.time() if now is None else now
+    con = factory()
+    try:
+        row = con.execute('''SELECT * FROM lineage_query_history WHERE parse_status='pending' AND next_parse_at<=?
+            ORDER BY created_at,rowid LIMIT 1''', (now,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return False
+    evidence_ref, next_parse_at = None, 0
+    attempts = row['parse_attempts']
+    try:
+        evidence = _import_query(row, 'system:lineage', factory)
+        evidence_ref = evidence['id']
+        status = evidence['state']['analysis']['status']
+    except Exception as exc:
+        attempts += 1
+        status = 'failed' if attempts >= 5 else 'pending'
+        next_parse_at = now + min(300, 5 * 2 ** (attempts-1))
+        log_event('lineage.query_parse_failed', level=30, error_type=type(exc).__name__)
+    con = factory()
+    try:
+        with con:
+            con.execute('''UPDATE lineage_query_history SET parse_status=?,parse_attempts=?,next_parse_at=?,evidence_ref=?
+                WHERE id=? AND parse_status='pending' AND parse_attempts=?''',
+                (status, attempts, next_parse_at, evidence_ref, row['id'], row['parse_attempts']))
+    finally:
+        con.close()
+    return True
 
 
 def capture_production(run_id,*,connection_factory=None,user_id=None):
@@ -89,10 +153,8 @@ def collect_available(user_id,*,connection_factory=None):
     results,errors = [],[]
     for item in history:
         try:
-            results.append(service.import_evidence(EvidenceInput(title='平台成功查询 / '+item['origin'],
-                content=item['sql_text'],source_id=item['source_id'],source_uri='platform://queries/'+item['id'],
-                source_version='1'),user_id,connection_factory=factory,_source_kind='query_execution',
-                _metadata=dict(executed_by=item['user_id'],executed_at=item['created_at'],origin=item['origin'])))
+            if (record := _import_query(item,user_id,factory)) is not None:
+                results.append(record)
         except Exception as exc:
             errors.append(dict(kind='query_execution',code=type(exc).__name__))
     for rid in runs:

@@ -30,6 +30,7 @@ def source_view(row) -> dict:
         "credential_configured": bool(row["credential"]),
         "enabled": bool(row["enabled"]),
         "last_synced_at": row["last_synced_at"],
+        "auto_lineage_interval_minutes": row["auto_lineage_interval_minutes"] if "auto_lineage_interval_minutes" in row.keys() else 0,
     }
 
 
@@ -103,6 +104,8 @@ def delete_source(source_id: str, actor_id: str) -> dict:
         connection.execute("DELETE FROM catalog_sync_runs WHERE source_id=?", (source_id,))
         connection.execute("DELETE FROM catalog_technical_state WHERE source_id=?", (source_id,))
         connection.execute("DELETE FROM catalog_quality_runs WHERE source_id=?", (source_id,))
+        connection.execute("DELETE FROM lineage_view_observations WHERE source_id=?", (source_id,))
+        connection.execute("DELETE FROM lineage_source_scan_state WHERE source_id=?", (source_id,))
         connection.execute("DELETE FROM data_sources WHERE id=?", (source_id,))
         connection.execute(
             "INSERT INTO catalog_audit_logs(actor_id,action,entity_type,entity_id,detail_json) VALUES (?,?,?,?,?)",

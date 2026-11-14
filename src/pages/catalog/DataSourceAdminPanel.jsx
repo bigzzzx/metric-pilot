@@ -19,7 +19,7 @@ async function requestJson(url, options) {
 
 const emptySource = () => ({
   name: '', kind: 'postgresql', endpoint: '127.0.0.1:15433', catalog_name: '',
-  auth_type: 'read_only_account', username: '', credential: '', enabled: true,
+  auth_type: 'read_only_account', username: '', credential: '', enabled: true, auto_lineage_interval_minutes: 0,
 });
 
 /** Admin-only data-source controls. The API enforces this permission as well. */
@@ -51,7 +51,8 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
     try {
       const url = draft.id ? `/api/data-sources/${draft.id}` : '/api/data-sources';
       const method = draft.id ? 'PUT' : 'POST';
-      const saved = await requestJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) });
+      const saved = await requestJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...draft,
+        auto_lineage_interval_minutes: draft.kind === 'postgresql' ? Number(draft.auto_lineage_interval_minutes || 0) : 0 }) });
       setDraft({ ...saved, credential: '' });
       setNotice('数据源配置已保存。');
       await loadSources();
@@ -65,7 +66,8 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
     setBusy(true); setNotice('');
     try {
       const result = await requestJson(`/api/data-sources/${draft.id}/${action}`, { method: 'POST' });
-      setNotice(action === 'sync' ? `已生成元数据快照 v${result.snapshot_version}：发现 ${result.table_count} 张表，当前有 ${result.pending_count} 个待审核变更。采集不会直接覆盖目录。` : result.message || '连接测试成功。');
+      const viewCount = (result.view_count || 0) + (result.materialized_view_count || 0);
+      setNotice(action === 'sync' ? `已生成元数据快照 v${result.snapshot_version}：发现 ${result.table_count - viewCount} 张表、${viewCount} 个视图，当前有 ${result.pending_count} 个待审核变更。采集不会直接覆盖目录。` : result.message || '连接测试成功。');
       await loadSources();
       if (action === 'sync') onCatalogChanged();
     } catch (error) {
@@ -104,10 +106,14 @@ export default function DataSourceAdminPanel({ onCatalogChanged = () => {} }) {
         <label>Catalog / 数据库<input value={draft.catalog_name || ''} onChange={event => setDraft({ ...draft, catalog_name: event.target.value })} placeholder="例如：data_agent_warehouse" /><small>PostgreSQL 中填写数据库名，不是 Schema 名。</small></label>
         <label>认证方式<select value={draft.auth_type} onChange={event => setDraft({ ...draft, auth_type: event.target.value })}><option value="none">无需认证</option><option value="read_only_account">只读账号 / Access Key</option><option value="token">访问令牌</option></select><small>数据库请使用专门的只读账号。</small></label>
         {draft.kind === 'postgresql' && <label>只读用户名<input value={draft.username || ''} onChange={event => setDraft({ ...draft, username: event.target.value })} placeholder="例如：data_agent_reader" autoComplete="off" /><small>当前测试数仓使用 data_agent_reader。</small></label>}
+        {draft.kind === 'postgresql' && <label>自动采集间隔<select value={draft.auto_lineage_interval_minutes || 0} onChange={event => setDraft({ ...draft, auto_lineage_interval_minutes: Number(event.target.value) })}>
+          {Array.from(new Set([0, 5, 15, 30, 60, 360, 1440, draft.auto_lineage_interval_minutes || 0])).sort((a, b) => a - b)
+            .map(value => <option key={value} value={value}>{value ? `每 ${value} 分钟` : '关闭，仅手动采集'}</option>)}
+        </select><small>保存后由后台只读采集表和视图。发现新定义仍需审核，不修改业务数据库。</small></label>}
         <label>{draft.kind === 'postgresql' ? '密码' : '凭据'}<input type="password" value={draft.credential || ''} onChange={event => setDraft({ ...draft, credential: event.target.value })} placeholder={draft.credential_configured ? '留空保持已有密码' : '保存时由服务端加密'} autoComplete="new-password" /><small>编辑时留空不会覆盖原密码；凭据不会返回浏览器。</small></label>
         <div className="source-actions"><button disabled={busy}>保存</button>{draft.id && <><button type="button" className="outline-button" disabled={busy || !draft.enabled} onClick={() => runAction('test')}>测试连接</button><button type="button" className="outline-button" disabled={busy || !draft.enabled} onClick={() => runAction('sync')}>采集表结构</button>{draft.id !== 'local-ecommerce-demo' && <button type="button" className="danger-button" disabled={busy} onClick={remove}>删除数据源</button>}</>}</div>
       </> : <p>点击“添加数据源”开始配置。</p>}</form>
-      <p className="source-note">请配置只读账号。数据源中已有的表、字段说明和主外键会被一并采集；目录审核发布后进入 RAG。</p>
+      <p className="source-note">请配置只读账号。采集包含表、字段、主外键及可读视图定义；已审核的视图依赖由后台生成。</p>
     </div>
     {notice && <p className="save-notice catalog-notice" role="status">{notice}</p>}
     {draft?.id && <MetadataChangeReview key={draft.id} sourceId={draft.id} onCatalogChanged={onCatalogChanged} />}

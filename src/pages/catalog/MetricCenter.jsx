@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import MetricLineage from './MetricLineage.jsx';
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -78,6 +79,7 @@ function MetricCard({ metric, metrics, onUpdated }) {
     {metric.wiki_index && <p><small>Wiki 检索索引：{metric.wiki_index.status}{metric.wiki_index.error ? ` · ${metric.wiki_index.error}` : ''}</small>
       {metric.wiki_index.status === 'failed' && <> <button className="link-button" disabled={busy} onClick={retryIndex}>重试索引</button></>}</p>}
     {!!metric.aliases?.length && <p>别名：{metric.aliases.join('、')}</p>}
+    {metric.contract?.asset_id && metric.certification_status === 'certified' && <MetricLineage metric={metric}/>}
     {metric.wiki?.content && <details><summary>口径 Wiki · 已审核</summary><p>{metric.wiki.summary}</p><p style={{ whiteSpace: 'pre-wrap' }}>{metric.wiki.content}</p>
       {!!metric.wiki.related_metric_ids?.length && <p>相关口径：{metric.wiki.related_metric_ids.map(id => metrics.find(m => m.id === id)?.display_name).filter(Boolean).join('、')}</p>}
       {!!metric.wiki.claims?.length && <div><strong>可追溯声明</strong>{metric.wiki.claims.map((claim, index) =>

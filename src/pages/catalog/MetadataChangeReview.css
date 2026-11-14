@@ -23,3 +23,4 @@
   .metadata-change-actions { grid-column: 2; }
   .sync-run-summary time { width: 100%; margin-left: 0; }
 }
+.metadata-view-definition { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }

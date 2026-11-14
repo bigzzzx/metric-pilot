@@ -24,11 +24,28 @@ function ChangeSummary({ change }) {
     {summary.type_changes?.map(item => <li key={item.column}>类型变化：{item.column}（{item.before} → {item.after}）</li>)}
     {summary.primary_key_changed && <li>主键定义发生变化</li>}
     {summary.comment_changed && <li>数据源注释发生变化</li>}
+    {summary.view_definition_changed && <li>视图定义或可见性发生变化，血缘会按当前审核版本重新校验</li>}
     {summary.before_count !== undefined && <li>关系数量：{summary.before_count} → {summary.after_count}</li>}
     {!summary.added_columns?.length && !summary.removed_columns?.length && !summary.type_changes?.length
-      && !summary.primary_key_changed && !summary.comment_changed && summary.before_count === undefined
+      && !summary.primary_key_changed && !summary.comment_changed && !summary.view_definition_changed && summary.before_count === undefined
       && <li>发现新的技术元数据版本</li>}
   </ul>;
+}
+
+function ViewDefinition({ sourceId, change }) {
+  const [definition, setDefinition] = useState(null);
+  const [error, setError] = useState('');
+  const load = async () => {
+    setError('');
+    try {
+      const result = await requestJson(`/api/catalog/admin/data-sources/${encodeURIComponent(sourceId)}/view-definition?change_id=${encodeURIComponent(change.id)}`);
+      setDefinition(result.definition || '本次未采到可解析的定义。');
+    } catch (err) { setError(err.message); }
+  };
+  return <details onToggle={event => { if (event.currentTarget.open && !definition) load(); }}>
+    <summary>查看本次采集的视图定义</summary>
+    {error ? <p role="alert" className="catalog-error">{error}</p> : <pre className="metadata-view-definition">{definition || '正在读取…'}</pre>}
+  </details>;
 }
 
 export default function MetadataChangeReview({ sourceId, onCatalogChanged = () => {} }) {
@@ -115,7 +132,7 @@ export default function MetadataChangeReview({ sourceId, onCatalogChanged = () =
     </div>
     {latest ? <div className="sync-run-summary">
       <span>快照 v{latest.snapshot_version}</span>
-      <span>{latest.table_count} 张表</span>
+      <span>{latest.table_count} 个表 / 视图</span>
       <span>新增 {latest.added_count}</span>
       <span>变化 {latest.changed_count}</span>
       <span>删除 {latest.removed_count}</span>
@@ -130,7 +147,9 @@ export default function MetadataChangeReview({ sourceId, onCatalogChanged = () =
       </div>
       <div className="metadata-change-list">{changes.map(change => <article key={change.id}>
         <label className="metadata-change-select"><input type="checkbox" checked={selected.includes(change.id)} onChange={event => setSelected(current => event.target.checked ? [...current, change.id] : current.filter(id => id !== change.id))}/></label>
-        <div className="metadata-change-main"><div><b>{change.entity_key}</b><span>{changeLabel(change.change_type)}</span></div><ChangeSummary change={change}/><input value={reasons[change.id] || ''} onChange={event => setReasons(current => ({ ...current, [change.id]: event.target.value }))} placeholder="审核备注（可选）"/></div>
+        <div className="metadata-change-main"><div><b>{change.entity_key}</b><span>{changeLabel(change.change_type)}</span></div><ChangeSummary change={change}/>
+          {change.after?.view_definition_status && <ViewDefinition sourceId={sourceId} change={change}/>}
+          <input value={reasons[change.id] || ''} onChange={event => setReasons(current => ({ ...current, [change.id]: event.target.value }))} placeholder="审核备注（可选）"/></div>
         <div className="metadata-change-actions"><button type="button" disabled={busy} onClick={() => decide(change, 'approve')}>批准</button><button type="button" className="outline-button" disabled={busy} onClick={() => decide(change, 'reject')}>拒绝</button></div>
       </article>)}</div>
     </> : latest && <p className="metadata-no-change">当前没有待审核变更。已发布目录不会因单纯采集而被覆盖。</p>}

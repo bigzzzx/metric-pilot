@@ -3,6 +3,7 @@ import datetime
 from decimal import Decimal
 from uuid import UUID
 import psycopg
+from psycopg import sql
 from backend.data_sources.base import ConnectorUnavailable
 from backend.data_sources.service import connector_from_row
 from backend.data_sources.query_catalog import QueryTargetError
@@ -19,7 +20,7 @@ def json_value(value):
     return value
 
 
-def execute_postgres(source, statement, limit=100):
+def execute_postgres(source, statement, limit=100, *, view_definitions=None):
     try:
         connector = connector_from_row(source)
         with connector._connect() as connection:
@@ -28,6 +29,21 @@ def execute_postgres(source, statement, limit=100):
                 cursor.execute('SET LOCAL search_path = pg_catalog')
                 cursor.execute("SET LOCAL statement_timeout = '10s'")
                 cursor.execute("SET LOCAL lock_timeout = '2s'")
+                if view_definitions:
+                    for (namespace, name), (kind, expected) in sorted(view_definitions.items()):
+                        # Hold a lightweight relation lock through EXPLAIN and SELECT so a
+                        # concurrently replaced definition cannot pass the check then run.
+                        relation = sql.Identifier(namespace, name)
+                        if kind == 'materialized_view':
+                            # PG16 LOCK TABLE rejects materialized views. Planning
+                            # this relation acquires the SELECT lock without reading rows.
+                            cursor.execute(sql.SQL('EXPLAIN SELECT 1 FROM {} LIMIT 0').format(relation))
+                        else:
+                            cursor.execute(sql.SQL('LOCK TABLE {} IN ACCESS SHARE MODE').format(relation))
+                        cursor.execute('SELECT pg_get_viewdef(to_regclass(%s), false) AS definition',
+                                       (relation.as_string(connection),))
+                        if cursor.fetchone()['definition'] != expected:
+                            raise QueryTargetError('view_definition_unapproved','视图定义已变化，请重新采集并审核。',409)
                 cursor.execute('EXPLAIN ' + statement)
                 bounded_limit = max(1, min(int(limit), 100))
                 # The SQL was AST-validated; the only appended value is a bounded integer.

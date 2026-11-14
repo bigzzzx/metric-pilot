@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dependencyLabel } from './MetricLineage.jsx';
 import './LineageEvidence.css';
 
 const names = {
@@ -10,6 +11,10 @@ const names = {
   join:'表关联',table_transform:'表级转换',column_value:'字段值来源',column_influence:'条件/分组影响',
   sql_import:'SQL 导入',etl_definition:'ETL 定义',business_document:'业务文档',production_run:'生产运行',
   query_execution:'查询执行',external_event:'外部事件',database_constraint:'数据库约束',
+  postgres_view_definition:'PostgreSQL 视图定义',database_view_definition:'数据库视图定义（非运行）',
+  waiting_review:'等待视图定义审核',waiting_assets:'等待资产发布',not_collected:'未采集',too_large:'定义超出解析预算',
+  missing:'视图已删除或不可见',unavailable:'定义不可用',pending:'等待处理',failed:'处理失败',
+  completed:'采集完成',waiting:'等待采集',scanning:'正在采集',
   demo_seed:'演示预置',database_or_legacy_declaration:'数据库或历史声明',schema_validated:'Schema 已校验',
   type_mismatch:'类型不兼容',active:'有效',invalidated:'已失效',sampled:'已采样',unknown:'未知',unspecified:'未指定',
 };
@@ -47,13 +52,22 @@ export function FieldLineagePanel({ asset, refreshKey=0 }) {
     </div>
     {error && <p className="catalog-error" role="alert">{error}</p>}
     {result ? <><p className="evidence-note">{result.edges.length} 条依赖 · 最多 3 跳 · 仅当前有权限且已审核发布的证据</p>
-      {!result.edges.length && <p className="evidence-empty">暂无已发布依赖。不代表业务中不存在关联，可由管理员导入证据并审核。</p>}
+      {result.view_status && <p className="evidence-note">视图自动血缘：{lineageLabel(result.view_status)}</p>}
+      {!result.edges.length && !result.metric_impacts?.length && <p className="evidence-empty">暂无已发布依赖。不代表业务中不存在关联，可由管理员导入证据并审核。</p>}
       {result.edges.map(edge=><article className="field-lineage-edge" key={edge.id}>
         <div className="evidence-flow"><Endpoint asset={edge.from_asset} column={edge.from_column}/><span aria-hidden="true">→</span><Endpoint asset={edge.to_asset} column={edge.to_column}/></div>
         <div className="evidence-badges"><span>{lineageLabel(edge.kind)}</span><span>{lineageLabel(edge.observation)}</span>{edge.context.influence_role && <span>{edge.context.influence_role}</span>}</div>
         <code>{edge.expression}</code>
         <details><summary>表达式、过滤、分组和证据版本</summary><pre>{JSON.stringify({source:edge.source,source_ref:edge.source_ref,locator:edge.locator,context:edge.context,review:edge.review},null,2)}</pre></details>
-      </article>)}</> : !error && <p className="evidence-note">正在加载已发布血缘…</p>}
+      </article>)}
+      {Boolean(result.metric_impacts?.length) && <section className="lineage-metric-impacts"><h4>受影响的已认证指标</h4>
+        {result.metric_impacts.map(metric => <article className="field-lineage-edge" key={metric.metric_id}>
+          <b>{metric.display_name} · v{metric.metric_version}</b>
+          <div className="evidence-badges">{metric.dependencies.map((dep, i) => <span key={i}>
+            {dependencyLabel(dep.role)}：{[metric.namespace, metric.table, dep.column].filter(Boolean).join('.')}
+          </span>)}</div>
+        </article>)}</section>}
+    </> : !error && <p className="evidence-note">正在加载已发布血缘…</p>}
   </section>;
 }
 
@@ -80,9 +94,9 @@ export default function LineageEvidence({ assets=[], isAdmin=false }) {
   const [form,setForm]=useState({source_kind:'sql_import',title:'',content:'',source_id:'',source_uri:'',source_version:'',asset_ids:[]});
   const [file,setFile]=useState(null),[status,setStatus]=useState(''),[sourceFilter,setSourceFilter]=useState(''),[source,setSource]=useState(null),[selected,setSelected]=useState(''),[selectedAsset,setSelectedAsset]=useState(null),[invalidReason,setInvalidReason]=useState('');
   const [revision,setRevision]=useState(0);
-  const [indexState,setIndexState]=useState(null),[kind,setKind]=useState(''),[visibleLimit,setVisibleLimit]=useState(50);
+  const [indexState,setIndexState]=useState(null),[collector,setCollector]=useState(null),[kind,setKind]=useState(''),[visibleLimit,setVisibleLimit]=useState(50);
   const sourceIds = useMemo(()=>[...new Set(assets.map(a=>a.source_id))],[assets]);
-  const reload = async()=>{ const [cs,ss,ix] = await Promise.all([request(base+'/candidates'),isAdmin ? request(base+'/sources') : Promise.resolve([]),isAdmin?request(base+'/index/jobs'):Promise.resolve(null)]); setCandidates(cs); setSources(ss);setIndexState(ix);setRevision(n=>n+1); };
+  const reload = async()=>{ const [cs,ss,ix,co] = await Promise.all([request(base+'/candidates'),isAdmin ? request(base+'/sources') : Promise.resolve([]),isAdmin?request(base+'/index/jobs'):Promise.resolve(null),isAdmin?request(base+'/collector').catch(()=>null):Promise.resolve(null)]); setCandidates(cs); setSources(ss);setIndexState(ix);setCollector(co);setRevision(n=>n+1); };
   useEffect(()=>{reload().catch(e=>setError(e.message));},[isAdmin]);
   useEffect(()=>{ let live=true; setSelectedAsset(null); if (selected) request('/api/catalog/assets/'+enc(selected)).then(x=>live&&setSelectedAsset(x)).catch(e=>live&&setError(e.message)); return ()=>{live=false;}; },[selected]);
   const run = async(work)=>{setBusy(true);setError('');setMessage('');try {const r=await work();await reload();setMessage(r?.message || '操作已完成；请核对状态。');return r;}catch(e){setError(e.message);}finally{setBusy(false);}};
@@ -99,6 +113,12 @@ export default function LineageEvidence({ assets=[], isAdmin=false }) {
   return <section className="lineage-evidence-panel">
     <div className="evidence-heading"><div><span className="asset-eyebrow">EVIDENCE & LINEAGE</span><h2>关联与字段血缘</h2><p>证据可追溯，语义需审核。技术校验、成功运行与人工批准各自独立。</p></div><button disabled={busy} onClick={()=>run(reload)}>刷新证据</button></div>
     {error && <p className="catalog-error" role="alert">{error}</p>}{message && <p className="evidence-success" role="status">{message}</p>}
+    {isAdmin && collector && <details className="evidence-import"><summary>自动采集 · {collector.enabled ? '已启用' : '已暂停'}</summary>
+      <p className="evidence-note">后台解析成功的查询，JOIN 仍需审核。远端定时采集需在数据源配置中单独开启。</p>
+      <p>查询：待处理 {collector.queries.pending || 0} · 已解析 {collector.queries.parsed || 0} · 未完整解析 {(collector.queries.partial || 0) + (collector.queries.unresolved || 0)} · 失败 {collector.queries.failed || 0}</p>
+      <p>视图：{Object.entries(collector.views).map(([key, n])=>`${lineageLabel(key)} ${n}`).join(' · ') || '暂无观察'}</p>
+      {collector.sources.map(item => <p key={item.source_id}>{item.name} · 每 {item.auto_lineage_interval_minutes} 分钟 · {lineageLabel(item.status)}{item.last_scan_at ? ` · ${item.last_scan_at} UTC` : ''}{item.last_error ? ` · ${item.last_error}` : ''}</p>)}
+    </details>}
     {isAdmin&&(indexHealth.pending+indexHealth.running+indexHealth.failed>0)&&<aside className="evidence-note" role="status">
       {indexHealth.pending} 个等待重试，{indexHealth.running} 个更新中，{indexHealth.failed} 个达到重试上限。
       {indexHealth.worker_enabled===false?'当前未启用向量后台消费，任务已持久保存，启用后继续处理。':'后台自动重试临时故障；达到上限后需管理员重试。'}

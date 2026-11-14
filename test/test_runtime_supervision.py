@@ -30,6 +30,7 @@ def test_monitor_only_marks_expiry_and_stops(monkeypatch):
 
 def test_app_lifecycle_starts_and_stops_both_consumers(monkeypatch):
     from backend import main,index_worker
+    from backend.lineage import worker as lineage_worker
     events=[]
     for name in ('configure_logging','init_storage','init_conversation_storage','register_mcp_tools'):
         monkeypatch.setattr(main,name,lambda *_a:None)
@@ -38,8 +39,9 @@ def test_app_lifecycle_starts_and_stops_both_consumers(monkeypatch):
         return lambda factory:(events.append('start:'+name) or SimpleNamespace(stop=lambda **_kw:events.append('stop:'+name)))
     monkeypatch.setattr(index_worker,'start_worker',start('index'))
     monkeypatch.setattr(monitor,'start_monitor',start('recovery'))
+    monkeypatch.setattr(lineage_worker,'start_lineage_worker',start('lineage'))
     async def run():
         async with main.lifespan(main.app):
-            assert events==['start:index','start:recovery']
+            assert events==['start:index','start:recovery','start:lineage']
     asyncio.run(run())
-    assert events==['start:index','start:recovery','stop:index','stop:recovery']
+    assert events==['start:index','start:recovery','start:lineage','stop:index','stop:recovery','stop:lineage']
